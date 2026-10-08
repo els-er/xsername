@@ -1,0 +1,21 @@
+T11 BUY 0.10@2000                        OK SL=1996.88 loss=499200.00 | one tick further loss 500800.00
+T11 SELL 0.10@2000                       OK SL=2003.12 loss=499200.00 | one tick further loss 500800.00
+T12 basket 0.1/0.2/0.3                   OK SL=1998.30 loss=496000.00 | one tick further loss 500800.00
+T13 user 0.02@2006.25 + 0.05@2000.20     OK SL=1997.47 loss=499360.00 | one tick further loss 500480.00
+T15 1 lot stops 500                      UNSAT SL=1994.99 loss=8016000.00
+T15 already beyond                       UNSAT SL=1999.99 loss=641600.00
+T17 preserved tighter                    OK SL=1997.88 loss=499200.00 | one tick further loss 500800.00
+T13 consumed at bid 216000.00000000364
+0 Rp0
+999 Rp999
+1000 Rp1.000
+500000 Rp500.000
+1000000 Rp1.000.000
+10500000 Rp10.500.000
+-500000 -Rp500.000
+-0.4 Rp0
+499999.5 Rp500.000
+9000000000000.0 Rp9.000.000.000.000
+-500000.0 -500000.0
+-499999.99
+83333 166666 250000

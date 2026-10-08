@@ -2,7 +2,7 @@
 
 **Dokumen yang diaudit:** `docs/EA_IDR_RISK_PROTECTION_SPEC.md`
 **Tahap:** pra-implementasi (§34 "Before coding" dan §41)
-**Status:** menunggu keputusan user untuk Q1–Q4 (bagian 7)
+**Status:** Q1–Q4 sudah dijawab user (bagian 10). Desain final ada di `docs/DESIGN.md`.
 
 ---
 
@@ -420,3 +420,14 @@ Sesuai §41, sebelum menulis kode saya akan menyiapkan:
 8. matriks uji.
 
 Setelah itu implementasi dikerjakan modul demi modul, compile dan uji per komponen yang kritis keselamatannya, lalu audit akhir sesuai daftar di §41.
+
+---
+
+## 10. Keputusan user (jawaban Q1–Q4)
+
+| Q | Jawaban user | Dampak pada desain |
+|---|---|---|
+| Q1 | Budget SL harus mengikuti berapa pun jumlah entry dan berapa pun lot-nya. Yang dihitung adalah **total** floating semua entry. Begitu total menyentuh nominal loss atau profit yang diset, semua posisi harus ter-close otomatis. | Opsi A dan C tidak dipakai. Alokasi default diganti menjadi **BASKET_COMMON_PRICE**: satu harga SL bersama per simbol+arah, di titik saat **total** loss basket = budget. Entry baru tidak menutup paksa posisi lama; SL seluruh basket dihitung ulang dari total. Close-all di total loss/profit tetap ditangani Feature A/B (client-side). SL basket menjadi cermin server-side-nya. Mode `PROPORTIONAL_TO_VOLUME` (spek harfiah) tetap tersedia sebagai opsi. Detail ada di DESIGN §5. |
+| Q2 | SL dipasang oleh EA ini dan boleh menutup paksa semua posisi terbuka. Harus bisa ON/OFF. | Engine SL mencakup **semua posisi akun**, termasuk posisi EA lain. Ada dua saklar: `EnableAggregateIDRSL` (engine ON/OFF) dan `FailSafeWhenCompliantSLImpossible` (`CLOSE_POSITION` / `LEAVE_UNPROTECTED`). |
+| Q3 | Minta panduan untuk pekerjaan ini. | Dibuat `docs/PANDUAN.md`: cara compile di MetaEditor, cara mengirim log error, instalasi, pengujian, deployment di VPS, dan opsi mengizinkan `download.mql5.com`. |
+| Q4 | Tidak perlu batas rugi harian. Cukup batas floating loss/profit. User selalu bisa entry lagi setelah hard close. | Tidak ada fitur batas harian. Default `LockAfterGlobalTrigger` diubah menjadi **false** (spek: true) agar user bisa langsung entry lagi. Fitur lock tetap tersedia dan bisa di-ON-kan. |
