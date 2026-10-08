@@ -553,7 +553,8 @@ void CEveAggregateSLManager::ApplyFailSafe(const SEvePosition &grp[], const stri
                    " | allocated budget " + EveFormatIDR(budget) +
                    " | closest legal SL " + ((res.closestLegalSL > 0.0) ? DoubleToString(res.closestLegalSL, digits) : "n/a") +
                    " | theoretical loss at closest legal SL " + EveFormatIDR(res.lossAtClosestLegal);
-   m_lastCritical = EveTruncate("SL UNSATISFIABLE " + sym + " " + tickets, 110);
+   m_lastCritical = EveTruncate("SL cannot be placed within the loss limit: " + sym + " " + tickets +
+                                ((m_cfg.slFailSafe == EVE_FAILSAFE_CLOSE_POSITION) ? "- position closed" : "- position NOT protected"), 160);
 
    if(m_cfg.slFailSafe == EVE_FAILSAFE_CLOSE_POSITION)
      {

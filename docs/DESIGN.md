@@ -1,4 +1,4 @@
-# Desain — EVE IDR Risk Protector v1.00
+# Desain — EVE IDR Risk Protector v1.10
 
 Dokumen ini memenuhi §41 spek: arsitektur, pemetaan requirement, struktur modul, state machine, algoritma SL agregat, algoritma loss/profit global, algoritma close/retry/verifikasi, dan matriks uji.
 
@@ -72,7 +72,8 @@ MQL5/
     StateMachine.mqh            state + tabel transisi legal
     Persistence.mqh             CEvePersistence + CEveInstanceGuard
     AggregateSLManager.mqh      engine SL agregat
-    RiskDashboard.mqh           panel chart + tombol reset 2 langkah
+    TrailTPManager.mqh          trailing stop + take profit per keranjang (v1.10)
+    RiskDashboard.mqh           panel chart (CCanvas, DPI-aware) + tombol reset 2 langkah
     RiskProtectorApp.mqh        orkestrator (dipakai EA production dan test harness)
 ```
 
@@ -338,3 +339,97 @@ Detail:
 | T23 | Close ditolak (market tutup / AutoTrading OFF) | CLOSE_FAILED, retry terus, sukses setelah pulih | D |
 | T24 | EA dipasang di 2 chart | chart kedua STANDBY | D |
 | T25 | Klasifikasi retcode | sesuai tabel §7 | U |
+
+
+---
+
+## 10. Tambahan v1.10
+
+### 10.1 Input bahasa Inggris sederhana
+
+Permintaan user: bahasa sederhana, tetap Inggris. Perubahan:
+- Saklar `bool` diganti enum **ON/OFF**.
+- Input yang tidak punya pilihan nyata dihapus dari tab Inputs: `RequireManualReset*` (lock selalu butuh reset manual) dan `ProtectionScope` (hanya satu nilai). Nilainya tetap dikirim ke engine.
+- Pengaturan teknis dikumpulkan di grup **8. ADVANCED** paling bawah.
+- Label tetap menyebut satuan **(IDR)** (§36).
+
+| Nama di spek | Label v1.10 |
+|---|---|
+| `EnableGlobalFloatingLossProtection` / `MaxGlobalFloatingLossIDR` | Close all when total loss reaches the limit / Max total loss (IDR) |
+| `LockAfterGlobalTrigger` | Lock EA after max loss (needs manual reset) |
+| `EnableGlobalFloatingProfitAutoClose` / `GlobalFloatingProfitTargetIDR` | Close all when total profit reaches the target / Profit target (IDR) |
+| `EnableAggregateIDRSL` / `MaxAggregateSLRiskIDR` | Put an SL on every position / Max total loss if all SLs are hit (IDR) |
+| `SLAllocationMethod` / `FailSafeWhenCompliantSLImpossible` | SL mode / If an SL cannot be placed within the limit |
+| `RebalanceExistingPositionsOnNewEntry` | Recalculate basket SL on a new entry |
+| `PreserveMoreProtectiveExistingSL` | Never move an SL further away |
+| `AutoApplySLToNewPositions` | Put SL on new positions (OFF = warning only) |
+| `CloseRetryCount` / `CloseRetryDelayMs` / `VerificationTimeoutMs` | Fast close retries / Fast retry delay (ms) / Wait for broker confirmation (ms) |
+| `CancelPendingOrdersWhenLocked` | Delete pending orders while locked |
+
+Dashboard, banner, dan notifikasi juga memakai bahasa Inggris sederhana. Log teknis tetap rinci.
+
+### 10.2 Take profit per keranjang
+
+Keranjang = posisi dengan simbol + arah yang sama.
+
+```text
+G(P) = Σ OrderCalcProfit(type, sym, vol_i, open_i, P)     (signed: semua posisi tutup bersamaan di P)
+P_tp = BUY : harga TERKECIL dengan G(P) >= target
+       SELL: harga TERBESAR dengan G(P) >= target
+```
+
+Langkah:
+1. Pencarian biner pada indeks tick, sama seperti solver SL (`SolvePriceForProfit`).
+2. Hasilnya dicek legal: BUY `TP ≥ Bid + jarak`, SELL `TP ≤ Ask − jarak`. Jika tidak legal, dilewati dulu.
+3. TP diubah hanya jika posisi belum punya TP, atau profit keranjang di TP sekarang menyimpang > 1% dari target (histeresis, tidak berubah tiap kali kurs bergerak).
+4. Jika `G(harga sekarang) ≥ target`, keranjang langsung ditutup (purpose `TAKE_PROFIT`). Ini menangani TP yang belum bisa dipasang.
+
+### 10.3 Trailing stop per keranjang
+
+```text
+aktif jika G(exit) >= start
+lock   = G(exit) - distance
+P_ts   = harga dengan G(P_ts) = lock (sisi terdekat ke pasar, solver yang sama)
+jika P_ts melewati batas legal broker -> pakai SL legal terdekat (ClosestLegalSL)
+pindah SL posisi i ke P_ts hanya jika:
+   SL_i kosong, atau
+   P_ts lebih protektif dari SL_i DAN G(P_ts) - G(SL_i) >= step
+```
+
+Sifatnya:
+- Stateless (tidak perlu menyimpan puncak; aman setelah restart).
+- SL hanya maju. `Never move an SL further away` dipaksa ON (validator) agar engine SL tidak melonggarkan SL trailing.
+- Bersama engine SL: keduanya hanya mengetatkan, dan permintaan digabung (SL paling protektif yang menang). Kepatuhan budget tetap terjaga.
+
+### 10.4 Satu perintah SL+TP, digabung per siklus
+
+- `RequestStops(ticket, sl, tp, purpose)`: `EVE_KEEP` = jangan ubah.
+- Permintaan dalam siklus yang sama untuk posisi yang sama digabung: SL paling protektif menang, TP terakhir menang.
+- Ditolak jika sedang in-flight (re-plan setelah verifikasi) atau jika posisi sedang ditutup.
+- Verifikasi memeriksa SL dan TP yang diminta. Bagian yang tidak legal/akan melebar dibuang, sisanya tetap dikirim.
+- Penghitung gagal:
+  - *hard* (SL yang dibutuhkan engine SL) dihitung ke fail-safe;
+  - *soft* (trailing/TP) hanya backoff hingga 30 detik dan **tidak** menunda engine SL.
+
+### 10.5 Pengiriman paralel (async)
+
+- `Send Orders In Parallel = ON` → `OrderSendAsync`. Semua close/modifikasi dalam satu siklus berangkat bersamaan.
+- `request_id` disimpan. Balasan broker datang lewat `OnTradeTransaction` (`TRADE_TRANSACTION_REQUEST`) → `OnRequestResult`:
+  - ditolak → retry dijadwalkan segera (close/delete) atau dicatat gagal (modifikasi);
+  - diterima → tetap menunggu verifikasi dari state posisi.
+- Jika balasan hilang, timeout verifikasi tetap menangani. Anti-duplikat sama seperti mode sinkron.
+
+### 10.6 Kapan engine SL/trailing/TP berjalan
+
+- Setiap siklus timer (250 ms).
+- Setiap event trade (posisi baru langsung dapat SL/TP).
+- Saat tick, paling sering tiap 200 ms.
+- Aksi hanya saat `ARMED`. Statistik panel diperbarui di semua state.
+
+### 10.7 Panel (CCanvas)
+
+- Satu `OBJ_BITMAP_LABEL` digambar dengan CCanvas.
+- Font dalam persepuluhan poin (diskalakan Windows). Semua jarak × `TERMINAL_SCREEN_DPI / 96`.
+- Lebar dihitung dari teks yang diukur (`TextWidth`): label kiri, angka rata kanan, panel melebar sampai maks ±470 px × skala. Teks yang lebih panjang dipotong dengan `...`, banner dibungkus kata per kata.
+- Badge status, bar progres (rugi, profit, risiko SL), tombol minimize, tombol RESET yang digambar (klik dideteksi dari koordinat `CHARTEVENT_OBJECT_CLICK`).
+- Posisi dihitung dari pojok pilihan dan ukuran chart, diperbarui saat `CHARTEVENT_CHART_CHANGE`.

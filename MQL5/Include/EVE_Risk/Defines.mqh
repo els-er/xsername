@@ -6,7 +6,7 @@
 #define EVE_RISK_DEFINES_MQH
 
 #define EVE_RP_NAME              "EVE IDR RISK PROTECTOR"
-#define EVE_RP_VERSION           "1.00"
+#define EVE_RP_VERSION           "1.10"
 #define EVE_RP_REQUIRED_CURRENCY "IDR"
 #define EVE_RP_MAGIC             770010
 #define EVE_RP_COMMENT           "EVE-RP"
@@ -32,8 +32,11 @@
 
 //--- trade operation kinds handled by the executor
 #define EVE_OP_CLOSE           0
-#define EVE_OP_MODIFY_SL       1
+#define EVE_OP_MODIFY_SL       1   // SL and/or TP modification (TRADE_ACTION_SLTP)
 #define EVE_OP_DELETE_ORDER    2
+
+// "Keep the current value" marker for SL/TP targets of a stops modification.
+#define EVE_KEEP               -1.0
 
 //+------------------------------------------------------------------+
 //| Enumerations                                                     |
@@ -61,25 +64,40 @@ enum ENUM_EVE_REASON
 
 enum ENUM_EVE_SCOPE
   {
-   EVE_SCOPE_ALL_ACCOUNT_POSITIONS = 0 // ALL ACCOUNT POSITIONS (every symbol, magic, manual and EA)
+   EVE_SCOPE_ALL_ACCOUNT_POSITIONS = 0 // All positions in the account
+  };
+
+// Simple ON/OFF switch for the MT5 Inputs tab.
+enum ENUM_EVE_ONOFF
+  {
+   EVE_OFF = 0, // OFF
+   EVE_ON  = 1  // ON
   };
 
 enum ENUM_EVE_SL_ALLOCATION
   {
-   EVE_SL_ALLOC_BASKET_COMMON_PRICE    = 0, // BASKET: one SL price per symbol+direction (total of all entries)
-   EVE_SL_ALLOC_PROPORTIONAL_TO_VOLUME = 1  // PROPORTIONAL TO VOLUME: fixed share of budget per position
+   EVE_SL_ALLOC_BASKET_COMMON_PRICE    = 0, // Basket: one SL price for all entries (symbol + direction)
+   EVE_SL_ALLOC_PROPORTIONAL_TO_VOLUME = 1  // Per position: loss share by lot size
   };
 
 enum ENUM_EVE_SL_FAILSAFE
   {
-   EVE_FAILSAFE_CLOSE_POSITION    = 0, // CLOSE POSITION
-   EVE_FAILSAFE_LEAVE_UNPROTECTED = 1  // LEAVE UNPROTECTED (critical alert only)
+   EVE_FAILSAFE_CLOSE_POSITION    = 0, // Close the position
+   EVE_FAILSAFE_LEAVE_UNPROTECTED = 1  // Leave it open (warning only)
   };
 
 enum ENUM_EVE_LOCK_NEWPOS_POLICY
   {
-   EVE_LOCKPOL_CLOSE_IMMEDIATELY = 0, // CLOSE NEW POSITION IMMEDIATELY (stay LOCKED)
-   EVE_LOCKPOL_ALERT_ONLY        = 1  // ALERT ONLY (leave new position open)
+   EVE_LOCKPOL_CLOSE_IMMEDIATELY = 0, // Close it immediately
+   EVE_LOCKPOL_ALERT_ONLY        = 1  // Leave it open (warning only)
+  };
+
+enum ENUM_EVE_CORNER
+  {
+   EVE_CORNER_LEFT_UPPER  = 0, // Top left
+   EVE_CORNER_RIGHT_UPPER = 1, // Top right
+   EVE_CORNER_LEFT_LOWER  = 2, // Bottom left
+   EVE_CORNER_RIGHT_LOWER = 3  // Bottom right
   };
 
 enum ENUM_EVE_LOG_LEVEL
@@ -96,7 +114,9 @@ enum ENUM_EVE_PURPOSE
    EVE_PURPOSE_LOCK_POLICY      = 1,
    EVE_PURPOSE_SL_FAILSAFE      = 2,
    EVE_PURPOSE_SL_ENGINE        = 3,
-   EVE_PURPOSE_PENDING_CANCEL   = 4
+   EVE_PURPOSE_PENDING_CANCEL   = 4,
+   EVE_PURPOSE_TRAILING         = 5,
+   EVE_PURPOSE_TAKE_PROFIT      = 6
   };
 
 //+------------------------------------------------------------------+
@@ -130,6 +150,13 @@ struct SEveConfig
    double                      slSafetyMarginPct;
    int                         slExtraBufferTicks;
    int                         slModifyFailuresBeforeFailSafe;
+   //--- trailing stop and take profit (per basket = symbol + direction, in IDR)
+   bool                        trailingEnabled;
+   long                        trailingStartIDR;
+   long                        trailingDistanceIDR;
+   long                        trailingStepIDR;
+   bool                        tpEnabled;
+   long                        tpBasketIDR;
    //--- execution
    int                         closeRetryCount;
    int                         closeRetryDelayMs;
@@ -137,6 +164,7 @@ struct SEveConfig
    int                         persistentRetryIntervalMs;
    int                         emergencyDeviationPoints;
    int                         reconciliationIntervalMs;
+   bool                        asyncSend;
    //--- notifications / logging / dashboard
    bool                        enablePush;
    bool                        enableAlerts;
@@ -144,6 +172,7 @@ struct SEveConfig
    bool                        showDashboard;
    int                         dashboardX;
    int                         dashboardY;
+   ENUM_EVE_CORNER             dashboardCorner;
    //--- test harness only (ignored outside the Strategy Tester)
    bool                        testAllowAnyCurrency;
   };
@@ -174,18 +203,26 @@ void EveConfigSetDefaults(SEveConfig &c)
    c.slSafetyMarginPct              = 1.0;
    c.slExtraBufferTicks             = 1;
    c.slModifyFailuresBeforeFailSafe = 5;
+   c.trailingEnabled                = false;
+   c.trailingStartIDR               = 100000;
+   c.trailingDistanceIDR            = 50000;
+   c.trailingStepIDR                = 10000;
+   c.tpEnabled                      = false;
+   c.tpBasketIDR                    = 300000;
    c.closeRetryCount                = 5;
    c.closeRetryDelayMs              = 250;
    c.verificationTimeoutMs          = 5000;
    c.persistentRetryIntervalMs      = 1000;
    c.emergencyDeviationPoints       = 1000;
    c.reconciliationIntervalMs       = 250;
+   c.asyncSend                      = true;
    c.enablePush                     = true;
    c.enableAlerts                   = true;
    c.enableFileLog                  = true;
    c.showDashboard                  = true;
    c.dashboardX                     = 10;
-   c.dashboardY                     = 25;
+   c.dashboardY                     = 30;
+   c.dashboardCorner                = EVE_CORNER_LEFT_UPPER;
    c.testAllowAnyCurrency           = false;
   }
 
@@ -211,22 +248,34 @@ string EveStateName(const ENUM_EVE_STATE s)
   }
 
 // Short label used on the chart dashboard (spec section 20).
-string EveStateDashboardLabel(const ENUM_EVE_STATE s)
+string EveStateLabel(const ENUM_EVE_STATE s)
   {
    switch(s)
      {
-      case EVE_STATE_INIT:                 return "INIT";
-      case EVE_STATE_VALIDATING:           return "VALIDATING";
-      case EVE_STATE_SAFE_DISABLED:        return "ERROR (SAFE_DISABLED)";
+      case EVE_STATE_INIT:                 return "STARTING";
+      case EVE_STATE_VALIDATING:           return "CHECKING";
+      case EVE_STATE_SAFE_DISABLED:        return "DISABLED";
       case EVE_STATE_ARMED:                return "ARMED";
-      case EVE_STATE_PROTECTION_TRIGGERED: return "PROTECTION";
-      case EVE_STATE_CLOSING_ALL:          return "CLOSING";
-      case EVE_STATE_CLOSE_FAILED:         return "CLOSING (FAILED-RETRYING)";
+      case EVE_STATE_PROTECTION_TRIGGERED: return "CLOSING ALL";
+      case EVE_STATE_CLOSING_ALL:          return "CLOSING ALL";
+      case EVE_STATE_CLOSE_FAILED:         return "CLOSE FAILED";
       case EVE_STATE_ALL_POSITIONS_CLOSED: return "ALL CLOSED";
       case EVE_STATE_LOCKED:               return "LOCKED";
       case EVE_STATE_STANDBY:              return "STANDBY";
      }
-   return "UNKNOWN";
+   return "?";
+  }
+
+// Short plain name of a trigger reason (dashboard, notifications).
+string EveReasonLabel(const ENUM_EVE_REASON r)
+  {
+   switch(r)
+     {
+      case EVE_REASON_NONE:                          return "-";
+      case EVE_REASON_GLOBAL_FLOATING_LOSS:          return "max total loss";
+      case EVE_REASON_GLOBAL_FLOATING_PROFIT_TARGET: return "profit target";
+     }
+   return "?";
   }
 
 string EveReasonName(const ENUM_EVE_REASON r)
@@ -261,6 +310,8 @@ string EvePurposeName(const int purpose)
       case EVE_PURPOSE_SL_FAILSAFE:      return "SL_FAILSAFE";
       case EVE_PURPOSE_SL_ENGINE:        return "SL_ENGINE";
       case EVE_PURPOSE_PENDING_CANCEL:   return "PENDING_CANCEL";
+      case EVE_PURPOSE_TRAILING:         return "TRAILING";
+      case EVE_PURPOSE_TAKE_PROFIT:      return "TAKE_PROFIT";
      }
    return "UNKNOWN";
   }
@@ -270,7 +321,7 @@ string EveOpKindName(const int kind)
    switch(kind)
      {
       case EVE_OP_CLOSE:        return "CLOSE";
-      case EVE_OP_MODIFY_SL:    return "MODIFY_SL";
+      case EVE_OP_MODIFY_SL:    return "MODIFY_STOPS";
       case EVE_OP_DELETE_ORDER: return "DELETE_ORDER";
      }
    return "UNKNOWN";
@@ -297,6 +348,7 @@ string EveBoolOnOff(const bool v)
   {
    return v ? "ON" : "OFF";
   }
+
 
 string EveTruncate(const string s, const int maxLen)
   {

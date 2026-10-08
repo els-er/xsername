@@ -69,11 +69,11 @@ bool CEveAccountValidator::CanTrade(const SEveEnvironment &env)
 string CEveAccountValidator::TradeBlockReason(const SEveEnvironment &env)
   {
    if(!env.connected)
-      return "terminal not connected to trade server";
+      return "MT5 is not connected to the broker";
    if(!env.terminalTradeAllowed)
-      return "AutoTrading (Algo Trading) button is OFF";
+      return "Algo Trading button is OFF";
    if(!env.mqlTradeAllowed)
-      return "'Allow Algo Trading' is OFF in EA properties";
+      return "'Allow Algo Trading' is OFF in the EA settings";
    if(!env.accountTradeAllowed)
       return "trading is disabled for this account";
    if(!env.accountExpertAllowed)

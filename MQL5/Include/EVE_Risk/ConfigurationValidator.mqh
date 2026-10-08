@@ -15,6 +15,8 @@ struct SEveFeatureFlags
    bool              lossActive;
    bool              profitActive;
    bool              slActive;
+   bool              trailActive;
+   bool              tpActive;
    bool              anyActive;
   };
 
@@ -46,8 +48,8 @@ int CEveConfigurationValidator::CheckRange(const int value, const int lo, const 
   {
    if(value < lo || value > hi)
      {
-      Add(errors, name + "=" + IntegerToString(value) + " is invalid (allowed " +
-          IntegerToString(lo) + ".." + IntegerToString(hi) + "); using safe default " + IntegerToString(def));
+      Add(errors, name + " = " + IntegerToString(value) + " is not valid (allowed " +
+          IntegerToString(lo) + ".." + IntegerToString(hi) + "), using safe value " + IntegerToString(def));
       return def;
      }
    return value;
@@ -64,7 +66,7 @@ void CEveConfigurationValidator::Validate(const SEveConfig &inCfg, SEveConfig &o
    //--- scope: only ALL_ACCOUNT_POSITIONS exists in this release
    if(out.scope != EVE_SCOPE_ALL_ACCOUNT_POSITIONS)
      {
-      Add(errors, "ProtectionScope is invalid; forced to ALL_ACCOUNT_POSITIONS");
+      Add(errors, "Protection scope not valid, using all positions in the account");
       out.scope = EVE_SCOPE_ALL_ACCOUNT_POSITIONS;
      }
 
@@ -72,12 +74,12 @@ void CEveConfigurationValidator::Validate(const SEveConfig &inCfg, SEveConfig &o
    flags.lossActive = out.enableGlobalLoss;
    if(out.enableGlobalLoss && out.maxGlobalLossIDR <= 0)
      {
-      Add(errors, "MAX GLOBAL FLOATING LOSS (IDR) must be > 0 -> GLOBAL FLOATING LOSS PROTECTION DISABLED");
+      Add(errors, "Max total loss must be > 0 - MAX TOTAL LOSS is turned OFF");
       flags.lossActive = false;
      }
    if(out.lockAfterGlobalLoss && !out.requireManualResetLoss)
      {
-      Add(errors, "LockAfterGlobalTrigger=true requires RequireManualReset=true -> treated as manual reset REQUIRED");
+      Add(errors, "Lock after max loss always needs a manual reset - manual reset kept");
       out.requireManualResetLoss = true;
      }
 
@@ -85,12 +87,12 @@ void CEveConfigurationValidator::Validate(const SEveConfig &inCfg, SEveConfig &o
    flags.profitActive = out.enableGlobalProfit;
    if(out.enableGlobalProfit && out.globalProfitTargetIDR <= 0)
      {
-      Add(errors, "GLOBAL FLOATING PROFIT TARGET (IDR) must be > 0 -> GLOBAL FLOATING PROFIT AUTO-CLOSE DISABLED");
+      Add(errors, "Profit target must be > 0 - PROFIT TARGET is turned OFF");
       flags.profitActive = false;
      }
    if(out.lockAfterGlobalProfit && !out.requireManualResetProfit)
      {
-      Add(errors, "LockAfterGlobalProfitTrigger=true requires RequireManualResetAfterProfit=true -> treated as manual reset REQUIRED");
+      Add(errors, "Lock after profit target always needs a manual reset - manual reset kept");
       out.requireManualResetProfit = true;
      }
 
@@ -98,65 +100,93 @@ void CEveConfigurationValidator::Validate(const SEveConfig &inCfg, SEveConfig &o
    flags.slActive = out.enableAggregateSL;
    if(out.enableAggregateSL && out.maxAggregateSLRiskIDR <= 0)
      {
-      Add(errors, "MAX AGGREGATE SL RISK (IDR) must be > 0 -> AGGREGATE IDR SL ENGINE DISABLED");
+      Add(errors, "Max SL loss must be > 0 - AUTO STOP LOSS is turned OFF");
       flags.slActive = false;
      }
    if(out.slAllocation != EVE_SL_ALLOC_BASKET_COMMON_PRICE &&
       out.slAllocation != EVE_SL_ALLOC_PROPORTIONAL_TO_VOLUME)
      {
-      Add(errors, "SLAllocationMethod is invalid; using BASKET_COMMON_PRICE");
+      Add(errors, "SL mode not valid, using Basket");
       out.slAllocation = EVE_SL_ALLOC_BASKET_COMMON_PRICE;
      }
    if(out.slFailSafe != EVE_FAILSAFE_CLOSE_POSITION && out.slFailSafe != EVE_FAILSAFE_LEAVE_UNPROTECTED)
      {
-      Add(errors, "FailSafeWhenCompliantSLImpossible is invalid; using CLOSE_POSITION");
+      Add(errors, "'If SL cannot be placed' not valid, using Close the position");
       out.slFailSafe = EVE_FAILSAFE_CLOSE_POSITION;
      }
    if(!MathIsValidNumber(out.slSafetyMarginPct) || out.slSafetyMarginPct < 0.0 || out.slSafetyMarginPct > 50.0)
      {
-      Add(errors, "SL BUDGET SAFETY MARGIN (%) must be 0..50; using 1.0");
+      Add(errors, "FX safety margin must be 0..50 %, using 1 %");
       out.slSafetyMarginPct = 1.0;
      }
-   out.slExtraBufferTicks = CheckRange(out.slExtraBufferTicks, 0, 1000, 1, "SLExtraBufferTicks", errors);
+   out.slExtraBufferTicks = CheckRange(out.slExtraBufferTicks, 0, 1000, 1, "Extra SL distance (ticks)", errors);
    out.slModifyFailuresBeforeFailSafe = CheckRange(out.slModifyFailuresBeforeFailSafe, 1, 100, 5,
-                                                   "SLModifyFailuresBeforeFailSafe", errors);
+                                                   "Max SL errors", errors);
+
+   //--- trailing stop / take profit (per basket, IDR)
+   flags.trailActive = out.trailingEnabled;
+   if(out.trailingEnabled && (out.trailingStartIDR <= 0 || out.trailingDistanceIDR <= 0 || out.trailingStepIDR < 0))
+     {
+      Add(errors, "Trailing: start and distance must be > 0, step >= 0 - TRAILING STOP is turned OFF");
+      flags.trailActive = false;
+      out.trailingEnabled = false;
+     }
+   if(flags.trailActive && out.trailingDistanceIDR > out.trailingStartIDR)
+      Add(warnings, "Trailing distance " + EveFormatIDRLong(out.trailingDistanceIDR) + " is larger than the start " +
+          EveFormatIDRLong(out.trailingStartIDR) + ": the first trailing SL is still below break-even");
+   if(flags.trailActive && !out.preserveMoreProtectiveSL)
+     {
+      Add(warnings, "Trailing is ON: 'Never move an SL further away' is forced ON");
+      out.preserveMoreProtectiveSL = true;
+     }
+   flags.tpActive = out.tpEnabled;
+   if(out.tpEnabled && out.tpBasketIDR <= 0)
+     {
+      Add(errors, "Basket TP must be > 0 - TAKE PROFIT is turned OFF");
+      flags.tpActive = false;
+      out.tpEnabled = false;
+     }
 
    //--- lock policy
    if(out.lockedNewPositionPolicy != EVE_LOCKPOL_CLOSE_IMMEDIATELY &&
       out.lockedNewPositionPolicy != EVE_LOCKPOL_ALERT_ONLY)
      {
-      Add(errors, "LockedNewPositionPolicy is invalid; using CLOSE_IMMEDIATELY");
+      Add(errors, "'New position while locked' not valid, using Close it immediately");
       out.lockedNewPositionPolicy = EVE_LOCKPOL_CLOSE_IMMEDIATELY;
      }
 
    //--- execution (technical values fall back to safe defaults)
-   out.closeRetryCount           = CheckRange(out.closeRetryCount, 0, 100, 5, "CloseRetryCount", errors);
-   out.closeRetryDelayMs         = CheckRange(out.closeRetryDelayMs, 0, 60000, 250, "CloseRetryDelayMs", errors);
-   out.verificationTimeoutMs     = CheckRange(out.verificationTimeoutMs, 100, 120000, 5000, "VerificationTimeoutMs", errors);
-   out.persistentRetryIntervalMs = CheckRange(out.persistentRetryIntervalMs, 100, 60000, 1000, "PersistentRetryIntervalMs", errors);
-   out.emergencyDeviationPoints  = CheckRange(out.emergencyDeviationPoints, 0, 1000000, 1000, "EmergencyCloseMaxDeviationPoints", errors);
-   out.reconciliationIntervalMs  = CheckRange(out.reconciliationIntervalMs, 50, 10000, 250, "ReconciliationIntervalMs", errors);
-   out.dashboardX                = CheckRange(out.dashboardX, 0, 5000, 10, "DashboardX", errors);
-   out.dashboardY                = CheckRange(out.dashboardY, 0, 5000, 25, "DashboardY", errors);
+   out.closeRetryCount           = CheckRange(out.closeRetryCount, 0, 100, 5, "Fast close retries", errors);
+   out.closeRetryDelayMs         = CheckRange(out.closeRetryDelayMs, 0, 60000, 250, "Fast retry delay (ms)", errors);
+   out.verificationTimeoutMs     = CheckRange(out.verificationTimeoutMs, 100, 120000, 5000, "Broker confirmation wait (ms)", errors);
+   out.persistentRetryIntervalMs = CheckRange(out.persistentRetryIntervalMs, 100, 60000, 1000, "Slow retry delay (ms)", errors);
+   out.emergencyDeviationPoints  = CheckRange(out.emergencyDeviationPoints, 0, 1000000, 1000, "Max slippage (points)", errors);
+   out.reconciliationIntervalMs  = CheckRange(out.reconciliationIntervalMs, 50, 10000, 250, "Check interval (ms)", errors);
+   out.dashboardX                = CheckRange(out.dashboardX, 0, 5000, 10, "Panel offset X", errors);
+   out.dashboardY                = CheckRange(out.dashboardY, 0, 5000, 30, "Panel offset Y", errors);
+   if(out.dashboardCorner != EVE_CORNER_LEFT_UPPER && out.dashboardCorner != EVE_CORNER_RIGHT_UPPER &&
+      out.dashboardCorner != EVE_CORNER_LEFT_LOWER && out.dashboardCorner != EVE_CORNER_RIGHT_LOWER)
+     {
+      Add(errors, "Panel position not valid, using Top left");
+      out.dashboardCorner = EVE_CORNER_LEFT_UPPER;
+     }
 
    //--- warnings
    flags.anyActive = (flags.lossActive || flags.profitActive || flags.slActive);
    if(!flags.anyActive)
-      Add(warnings, "WARNING: ALL AUTOMATIC RISK PROTECTION IS DISABLED");
+      Add(warnings, "WARNING: ALL AUTOMATIC PROTECTION IS OFF");
    if(flags.slActive && flags.lossActive && out.maxAggregateSLRiskIDR > out.maxGlobalLossIDR)
-      Add(warnings, "SL risk budget " + EveFormatIDRLong(out.maxAggregateSLRiskIDR) +
-          " is larger than the global floating loss limit " + EveFormatIDRLong(out.maxGlobalLossIDR) +
-          ": the global close-all will normally trigger before the SLs");
+      Add(warnings, "Max SL loss " + EveFormatIDRLong(out.maxAggregateSLRiskIDR) +
+          " is larger than max total loss " + EveFormatIDRLong(out.maxGlobalLossIDR) +
+          ": the total close-all will usually happen before the SLs are hit");
    if(flags.slActive && !out.autoApplySLToNewPositions)
-      Add(warnings, "AutoApplySLToNewPositions=false: SL engine is ADVISORY ONLY (no SL is placed, no fail-safe close)");
+      Add(warnings, "SL for new positions is OFF: auto SL only warns (no SL is placed, nothing is closed)");
    if(flags.slActive && !out.preserveMoreProtectiveSL)
-      Add(warnings, "PreserveMoreProtectiveExistingSL=false: the EA may WIDEN existing stops (within budget). Stops that lock profit are never widened.");
+      Add(warnings, "'Never move an SL further away' is OFF: the EA may move SLs further away (within the limit). SLs that lock profit are never moved away.");
    if(flags.slActive && out.slFailSafe == EVE_FAILSAFE_LEAVE_UNPROTECTED)
-      Add(warnings, "Fail-safe LEAVE_UNPROTECTED: positions without a compliant SL stay open (critical alert only)");
-   if(!out.lockAfterGlobalLoss && !out.lockAfterGlobalProfit && out.cancelPendingWhenLocked)
-      Add(warnings, "Lock is OFF for both triggers: pending orders are NOT cancelled after a close-all");
+      Add(warnings, "If SL cannot be placed: the position stays open (warning only)");
    if(out.closeRetryCount == 0)
-      Add(warnings, "CloseRetryCount=0: no fast burst; failed closes go straight to persistent retry");
+      Add(warnings, "Fast close retries = 0: a failed close goes straight to slow retries");
   }
 
 //+------------------------------------------------------------------+
@@ -173,9 +203,12 @@ double CEveConfigurationValidator::Checksum(const SEveConfig &c)
               IntegerToString((int)c.slAllocation) + (c.preserveMoreProtectiveSL ? "1" : "0") +
               IntegerToString((int)c.slFailSafe) + DoubleToString(c.slSafetyMarginPct, 2) +
               IntegerToString(c.slExtraBufferTicks) + IntegerToString(c.slModifyFailuresBeforeFailSafe) + "|" +
+              (c.trailingEnabled ? "1" : "0") + IntegerToString(c.trailingStartIDR) + IntegerToString(c.trailingDistanceIDR) +
+              IntegerToString(c.trailingStepIDR) + (c.tpEnabled ? "1" : "0") + IntegerToString(c.tpBasketIDR) + "|" +
               IntegerToString(c.closeRetryCount) + IntegerToString(c.closeRetryDelayMs) +
               IntegerToString(c.verificationTimeoutMs) + IntegerToString(c.persistentRetryIntervalMs) +
-              IntegerToString(c.emergencyDeviationPoints) + IntegerToString(c.reconciliationIntervalMs) + "|" +
+              IntegerToString(c.emergencyDeviationPoints) + IntegerToString(c.reconciliationIntervalMs) +
+              (c.asyncSend ? "1" : "0") + "|" +
               EVE_RP_VERSION;
    return (double)EveFnv1a(s);
   }
@@ -193,6 +226,10 @@ string CEveConfigurationValidator::Summary(const SEveConfig &c, const SEveFeatur
               " preserve=" + EveBoolOnOff(c.preserveMoreProtectiveSL) +
               " failsafe=" + (c.slFailSafe == EVE_FAILSAFE_CLOSE_POSITION ? "CLOSE" : "LEAVE_UNPROTECTED") +
               " margin=" + DoubleToString(c.slSafetyMarginPct, 2) + "%" +
+              " | TRAIL " + (flags.trailActive ? "ON start " + EveFormatIDRLong(c.trailingStartIDR) + " dist " +
+                             EveFormatIDRLong(c.trailingDistanceIDR) + " step " + EveFormatIDRLong(c.trailingStepIDR) : "OFF") +
+              " | TP " + (flags.tpActive ? "ON " + EveFormatIDRLong(c.tpBasketIDR) + "/basket" : "OFF") +
+              " | async " + EveBoolOnOff(c.asyncSend) +
               " | retry " + IntegerToString(c.closeRetryCount) + "x" + IntegerToString(c.closeRetryDelayMs) + "ms" +
               " verify=" + IntegerToString(c.verificationTimeoutMs) + "ms" +
               " dev=" + IntegerToString(c.emergencyDeviationPoints) + "pt" +

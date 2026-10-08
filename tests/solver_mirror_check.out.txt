@@ -19,3 +19,14 @@ T13 consumed at bid 216000.00000000364
 -500000.0 -500000.0
 -499999.99
 83333 166666 250000
+TP BUY 0.10@2000 target 300k       price=2001.88 profit=300800.00 | one tick earlier profit=299200.00
+TP SELL 0.10@2000 target 300k      price=1998.12 profit=300800.00 | one tick earlier profit=299200.00
+TP user basket target 300k         price=2004.61 profit=300320.00 | one tick earlier profit=299200.00
+TRAIL BUY bid 2002 lock 270k       price=2001.69 profit=270400.00 | one tick earlier profit=268800.00
+TRAIL SELL ask 1998 lock 270k      price=1998.31 profit=270400.00 | one tick earlier profit=268800.00
+TRAIL BUY clamp lock 319k          price=2002.00 profit=320000.00 | one tick earlier profit=318400.00
+closest legal BUY bid 2002: 2001.99
+closest legal SELL ask 1998: 1998.01
+trail BUY cur SL 2001.5 profit at cur 240000.00000000003
+trail BUY cur SL 2001.65 profit at cur 264000.00000001455
+trail BUY cur SL 2001.8 profit at cur 287999.9999999927

@@ -21,6 +21,7 @@
 #include "StateMachine.mqh"
 #include "Persistence.mqh"
 #include "AggregateSLManager.mqh"
+#include "TrailTPManager.mqh"
 #include "RiskDashboard.mqh"
 
 class CEveRiskProtectorApp
@@ -39,6 +40,7 @@ private:
    CEveTradeExecutor      m_exec;
    CEveStateMachine       m_sm;
    CEveAggregateSLManager m_sl;
+   CEveTrailTPManager     m_trail;
    CEveRiskDashboard      m_dash;
    SEveEnvironment        m_env;
    bool                   m_isTester;
@@ -48,6 +50,7 @@ private:
    bool                   m_timerOk;
    ulong                  m_lastDashMs;
    ulong                  m_emptySinceMs;
+   ulong                  m_lastStopsMs;
    string                 m_lastEvent;
    string                 m_safeDisabledReason;
    ENUM_EVE_REASON        m_lastReason;
@@ -79,7 +82,8 @@ public:
    void              Deinit(const int reason);
    void              OnTickEvent(void)  { Cycle("tick", false); }
    void              OnTimerEvent(void) { Cycle("timer", true); }
-   void              OnTradeTransactionEvent(const MqlTradeTransaction &trans);
+   void              OnTradeTransactionEvent(const MqlTradeTransaction &trans, const MqlTradeRequest &request,
+                                             const MqlTradeResult &result);
    void              OnChartEventHandler(const int id, const long &lparam, const double &dparam, const string &sparam);
 
    //--- read-only accessors (dashboard / tester harness)
@@ -109,6 +113,7 @@ CEveRiskProtectorApp::CEveRiskProtectorApp(void) : m_cfgChecksum(0.0),
                                                    m_timerOk(false),
                                                    m_lastDashMs(0),
                                                    m_emptySinceMs(0),
+                                                   m_lastStopsMs(0),
                                                    m_lastEvent(""),
                                                    m_safeDisabledReason(""),
                                                    m_lastReason(EVE_REASON_NONE),
@@ -118,6 +123,8 @@ CEveRiskProtectorApp::CEveRiskProtectorApp(void) : m_cfgChecksum(0.0),
    m_flags.lossActive = false;
    m_flags.profitActive = false;
    m_flags.slActive = false;
+   m_flags.trailActive = false;
+   m_flags.tpActive = false;
    m_flags.anyActive = false;
   }
 
@@ -153,6 +160,7 @@ int CEveRiskProtectorApp::Init(const SEveConfig &cfg)
    m_tradeBlockedLogged = false;
    m_lastDashMs = 0;
    m_emptySinceMs = 0;
+   m_lastStopsMs = 0;
    m_lastEvent = "";
    m_safeDisabledReason = "";
    m_lastReason = EVE_REASON_NONE;
@@ -183,22 +191,27 @@ int CEveRiskProtectorApp::Init(const SEveConfig &cfg)
                     "' accepted for testing only (amounts are in deposit currency units)");
       currencyOK = true;
      }
-   m_dash.Init(cfg.showDashboard, cfg.dashboardX, cfg.dashboardY);
+   m_dash.Init(cfg.showDashboard, (int)cfg.dashboardCorner, cfg.dashboardX, cfg.dashboardY);
    if(!currencyOK)
      {
-      m_safeDisabledReason = "ACCOUNT CURRENCY IS '" + m_env.currency + "', NOT IDR - PROTECTION DISABLED";
+      m_safeDisabledReason = "account currency is '" + m_env.currency + "', not IDR - all protection is off";
       m_log.Critical("CURRENCY", "Account currency is '" + m_env.currency + "' but IDR is required. No monetary risk " +
                      "calculation is performed and no FX conversion is guessed. Entering SAFE_DISABLED.");
       m_sm.TransitionTo(EVE_STATE_SAFE_DISABLED, "account currency is not IDR");
-      m_notify.Notify("SAFE_DISABLED: account currency " + m_env.currency + " is not IDR", true);
+      m_notify.Notify("EA DISABLED: account currency is " + m_env.currency + ", not IDR", true);
       EveConfigSetDefaults(m_cfg);
       m_flags.lossActive = false;
       m_flags.profitActive = false;
       m_flags.slActive = false;
+      m_flags.trailActive = false;
+      m_flags.tpActive = false;
       m_flags.anyActive = false;
       m_scanner.Init(m_env.currencyDigits, m_cfg.scope);
       m_exec.Init(GetPointer(m_log), m_cfg, m_env.hedging);
       m_sl.Init(GetPointer(m_log), GetPointer(m_exec), GetPointer(m_notify), m_cfg, false);
+      m_cfg.trailingEnabled = false;
+      m_cfg.tpEnabled = false;
+      m_trail.Init(GetPointer(m_log), GetPointer(m_exec), GetPointer(m_notify), m_cfg);
       StartTimer(1000);
       RefreshDashboard(true);
       return INIT_SUCCEEDED;   // stay on the chart and show the error
@@ -229,9 +242,10 @@ int CEveRiskProtectorApp::Init(const SEveConfig &cfg)
    m_scanner.Init(m_env.currencyDigits, m_cfg.scope);
    m_exec.Init(GetPointer(m_log), m_cfg, m_env.hedging);
    m_sl.Init(GetPointer(m_log), GetPointer(m_exec), GetPointer(m_notify), m_cfg, m_flags.slActive);
+   m_trail.Init(GetPointer(m_log), GetPointer(m_exec), GetPointer(m_notify), m_cfg);
    m_persist.Init(login, server);
    m_guard.Init(m_persist.Prefix(), !m_isTester);
-   m_dash.Init(m_cfg.showDashboard, m_cfg.dashboardX, m_cfg.dashboardY);
+   m_dash.Init(m_cfg.showDashboard, (int)m_cfg.dashboardCorner, m_cfg.dashboardX, m_cfg.dashboardY);
    StartTimer(m_cfg.reconciliationIntervalMs);
 
    //--- single instance per account (audit G-09)
@@ -277,7 +291,7 @@ void CEveRiskProtectorApp::RestoreAndArm(const string source)
                     " - press RESET PROTECTION (two clicks) to re-arm.");
       if(!LockAppliesFor((ENUM_EVE_REASON)ps.reason))
          m_log.Warning("RESTORE", "Note: the lock setting for this reason is now OFF, but an existing lock is only cleared by manual reset.");
-      SetEvent("Restored LOCKED");
+      SetEvent("Restored: LOCKED");
      }
    else
       if(ps.found && ps.state == (int)EVE_STATE_CLOSING_ALL)
@@ -288,13 +302,13 @@ void CEveRiskProtectorApp::RestoreAndArm(const string source)
          m_sm.TransitionTo(EVE_STATE_CLOSING_ALL, "restored: a close-all was in progress (" + source + ")");
          m_log.Critical("RESTORE", "RESUMING CLOSE-ALL after restart (reason " + EveReasonName((ENUM_EVE_REASON)ps.reason) +
                         ", triggered " + TimeToString(ps.triggerTime, TIME_DATE | TIME_SECONDS) + ")");
-         m_notify.Notify("Restart: resuming close-all (" + EveReasonName((ENUM_EVE_REASON)ps.reason) + ")", true);
-         SetEvent("Resuming close-all");
+         m_notify.Notify("Restart: continuing to close all positions (" + EveReasonLabel((ENUM_EVE_REASON)ps.reason) + ")", true);
+         SetEvent("Continuing close-all");
         }
       else
         {
          m_sm.TransitionTo(EVE_STATE_ARMED, "armed (" + source + ")");
-         SetEvent("Armed");
+         SetEvent("EA armed");
         }
    PersistState();
    m_setChangedSinceSL = true;
@@ -381,7 +395,7 @@ void CEveRiskProtectorApp::CheckTradePermission(void)
       string why = CEveAccountValidator::TradeBlockReason(m_env);
       m_log.Critical("ENV", "TRADING NOT POSSIBLE: " + why +
                      " - triggers are still evaluated but positions CANNOT be closed or modified until this is fixed.");
-      m_notify.Notify("PROTECTION CANNOT EXECUTE: " + why, true);
+      m_notify.Notify("CANNOT TRADE: " + why, true);
       m_tradeBlockedLogged = true;
      }
    else
@@ -482,13 +496,18 @@ void CEveRiskProtectorApp::Cycle(const string source, const bool full)
       if(st == EVE_STATE_LOCKED)
          HandleLocked();
 
-   //--- aggregate SL engine: timer cycles only, actions only while ARMED (audit G-21)
-   if(full)
+   //--- stops engines (aggregate SL, trailing, take profit): on timer cycles, on trade
+   //--- events (a new position gets its SL/TP at once) and on ticks at most every 200 ms.
+   //--- Actions only while ARMED (audit G-21); statistics are refreshed in every state.
+   ulong nowMs = GetTickCount64();
+   if(full || source == "trade" || nowMs - m_lastStopsMs >= 200)
      {
+      m_lastStopsMs = nowMs;
       bool armed = (m_sm.State() == EVE_STATE_ARMED);
       m_sl.Reconcile(m_scanner, armed, m_setChangedSinceSL);
       if(armed)
          m_setChangedSinceSL = false;
+      m_trail.Reconcile(m_scanner, armed);
      }
 
    m_exec.Process();
@@ -526,8 +545,9 @@ void CEveRiskProtectorApp::TriggerProtection(const ENUM_EVE_REASON reason)
    m_sm.TransitionTo(EVE_STATE_PROTECTION_TRIGGERED, what);
    PersistState();
    m_exec.CancelModifyOps("global protection triggered");
-   m_notify.Notify(what + ". " + cond + ". Closing ALL " + IntegerToString(n) + " position(s).", true);
-   SetEvent(lossTrigger ? "LOSS TRIGGER " + EveFormatIDRSigned(total) : "PROFIT TARGET " + EveFormatIDRSigned(total));
+   m_notify.Notify((lossTrigger ? "MAX TOTAL LOSS HIT " : "PROFIT TARGET HIT ") + EveFormatIDRSigned(total) +
+                   " - closing all " + IntegerToString(n) + " position(s)", true);
+   SetEvent(lossTrigger ? "Max loss hit " + EveFormatIDRSigned(total) : "Profit target hit " + EveFormatIDRSigned(total));
    if(LockAppliesFor(reason) && m_cfg.cancelPendingWhenLocked)
       CancelPendingOrders("lock will apply after this close-all");
    m_sm.TransitionTo(EVE_STATE_CLOSING_ALL, "close-all started");
@@ -569,7 +589,7 @@ void CEveRiskProtectorApp::HandleClosing(void)
      {
       m_sm.TransitionTo(EVE_STATE_CLOSE_FAILED, "close retries exhausted or blocked - still retrying");
       m_notify.Notify("CLOSE FAILED - still retrying: " + m_exec.LastFailure(), true);
-      SetEvent("CLOSE FAILED - retrying");
+      SetEvent("Close failed - retrying");
      }
    else
       if(!failing && st == EVE_STATE_CLOSE_FAILED)
@@ -605,8 +625,8 @@ void CEveRiskProtectorApp::FinalizeCloseAll(void)
                     ((m_cfg.lockedNewPositionPolicy == EVE_LOCKPOL_CLOSE_IMMEDIATELY) ? "CLOSED IMMEDIATELY" : "ALERT ONLY") +
                     ". Pending orders: " + (m_cfg.cancelPendingWhenLocked ? "CANCELLED" : "NOT cancelled") +
                     ". Press RESET PROTECTION (two clicks) to re-arm.");
-      m_notify.Notify("All positions closed. LOCKED after " + EveReasonName(reason) + " - manual reset required.", true);
-      SetEvent("All closed -> LOCKED");
+      m_notify.Notify("All positions closed (" + EveReasonLabel(reason) + "). EA LOCKED - manual reset needed.", true);
+      SetEvent("All closed - LOCKED");
       if(m_cfg.cancelPendingWhenLocked)
          CancelPendingOrders("entered LOCKED");
      }
@@ -615,8 +635,8 @@ void CEveRiskProtectorApp::FinalizeCloseAll(void)
       m_sm.TransitionTo(EVE_STATE_ARMED, "lock OFF for " + EveReasonName(reason) + " - re-armed");
       m_sm.SetReason(EVE_REASON_NONE, 0);
       PersistState();
-      m_notify.Notify("All positions closed (" + EveReasonName(reason) + "). Re-ARMED - new entries allowed.", false);
-      SetEvent("All closed -> ARMED");
+      m_notify.Notify("All positions closed (" + EveReasonLabel(reason) + "). EA armed again - you can trade.", false);
+      SetEvent("All closed - armed again");
      }
    m_setChangedSinceSL = true;
   }
@@ -657,8 +677,8 @@ void CEveRiskProtectorApp::HandleLocked(void)
          else
             m_log.Warning("LOCK", "Position detected while LOCKED - ALERT ONLY policy, position left open: " + DescribePosition(p));
          m_notify.Notify("LOCKED: new position " + p.symbol + " " + EvePositionTypeName(p.type) + " " +
-                         DoubleToString(p.volume, 2) + (closePolicy ? " -> closing" : " -> left open"), true);
-         SetEvent(closePolicy ? "LOCKED: closing new position" : "LOCKED: new position (alert)");
+                         DoubleToString(p.volume, 2) + (closePolicy ? " - closed" : " - left open"), true);
+         SetEvent(closePolicy ? "Locked: new position closed" : "Locked: new position (warning)");
         }
       if(closePolicy && !m_exec.HasOp(p.ticket, EVE_OP_CLOSE))
          m_exec.RequestClose(p.ticket, EVE_PURPOSE_LOCK_POLICY);
@@ -720,13 +740,13 @@ void CEveRiskProtectorApp::ManualReset(const string source)
    if(st != EVE_STATE_LOCKED)
      {
       m_log.Info("RESET", "Reset ignored (" + source + "): state is " + EveStateName(st) + ", not LOCKED");
-      SetEvent("Reset ignored (not LOCKED)");
+      SetEvent("Reset ignored (not locked)");
       return;
      }
    if(m_exec.HasActiveCloseOps())
      {
       m_log.Warning("RESET", "Reset REFUSED (" + source + "): a close operation is still active - wait until it is verified.");
-      SetEvent("Reset refused: close active");
+      SetEvent("Reset refused: still closing");
       return;
      }
    m_log.Warning("RESET", "MANUAL RESET requested (" + source + "): clearing persistent lock (last trigger " +
@@ -740,14 +760,18 @@ void CEveRiskProtectorApp::ManualReset(const string source)
    m_scanner.Scan();
    m_log.Info("RESET", "MANUAL RESET COMPLETE: LOCKED -> ARMED | open positions " + IntegerToString(m_scanner.Count()) +
               " | floating " + EveFormatIDRSigned(m_scanner.TotalProfit()));
-   m_notify.Notify("Protection reset by user - ARMED", false);
-   SetEvent("Manual reset -> ARMED");
+   m_notify.Notify("Protection reset - EA armed again", false);
+   SetEvent("Manual reset - armed");
    Cycle("reset", true);
   }
 
 //+------------------------------------------------------------------+
-void CEveRiskProtectorApp::OnTradeTransactionEvent(const MqlTradeTransaction &trans)
+void CEveRiskProtectorApp::OnTradeTransactionEvent(const MqlTradeTransaction &trans, const MqlTradeRequest &request,
+                                                   const MqlTradeResult &result)
   {
+   //--- broker reply to an asynchronous request
+   if(trans.type == TRADE_TRANSACTION_REQUEST)
+      m_exec.OnRequestResult(request, result);
    //--- any position/order/deal change: reconcile immediately (spec 12)
    if(trans.type == TRADE_TRANSACTION_POSITION || trans.type == TRADE_TRANSACTION_DEAL_ADD ||
       trans.type == TRADE_TRANSACTION_ORDER_ADD || trans.type == TRADE_TRANSACTION_ORDER_DELETE ||
@@ -762,9 +786,15 @@ void CEveRiskProtectorApp::OnTradeTransactionEvent(const MqlTradeTransaction &tr
 //+------------------------------------------------------------------+
 void CEveRiskProtectorApp::OnChartEventHandler(const int id, const long &lparam, const double &dparam, const string &sparam)
   {
+   if(id == CHARTEVENT_CHART_CHANGE)
+     {
+      m_dash.OnChartChange();
+      RefreshDashboard(true);
+      return;
+     }
    if(id != CHARTEVENT_OBJECT_CLICK)
       return;
-   int r = m_dash.HandleClick(sparam);
+   int r = m_dash.HandleClick(sparam, (int)lparam, (int)dparam);
    if(r == 1)
      {
       m_log.Info("RESET", "RESET PROTECTION pressed - click again within 10 s to confirm");
@@ -777,46 +807,49 @@ void CEveRiskProtectorApp::OnChartEventHandler(const int id, const long &lparam,
          ManualReset("chart button, confirmed");
          RefreshDashboard(true);
         }
+      else
+         if(r == 3)
+            RefreshDashboard(true);
   }
 
 //+------------------------------------------------------------------+
 string CEveRiskProtectorApp::BuildBanner(color &clr)
   {
    ENUM_EVE_STATE st = m_sm.State();
-   clr = C'255,90,90';
+   clr = C'239,83,80';
    if(st == EVE_STATE_SAFE_DISABLED)
-      return "SAFE_DISABLED: " + m_safeDisabledReason;
+      return "EA DISABLED: " + m_safeDisabledReason;
    if(st == EVE_STATE_CLOSE_FAILED)
-      return "!!! CLOSE FAILED - RETRYING: " + m_exec.LastFailure();
+      return "CLOSE FAILED - STILL RETRYING: " + m_exec.LastFailure();
    if(EveIsClosingState(st))
-      return "!!! CLOSE-ALL IN PROGRESS (" + EveReasonName(m_sm.Reason()) + ") !!!";
+      return "CLOSING ALL POSITIONS (" + EveReasonLabel(m_sm.Reason()) + ")";
    if(st == EVE_STATE_LOCKED)
      {
-      clr = clrOrange;
-      return "LOCKED after " + EveReasonName(m_sm.Reason()) + " - press RESET PROTECTION to re-arm";
+      clr = C'255,167,38';
+      return "EA LOCKED after " + EveReasonLabel(m_sm.Reason()) + ". Click RESET PROTECTION twice to re-arm.";
      }
    if(st == EVE_STATE_STANDBY)
      {
-      clr = clrOrange;
-      return "STANDBY: another instance protects this account";
+      clr = C'255,167,38';
+      return "STANDBY: this EA already runs on another chart for this account";
      }
    if(!CEveAccountValidator::CanTrade(m_env))
-      return "PROTECTION CANNOT EXECUTE: " + CEveAccountValidator::TradeBlockReason(m_env);
+      return "CANNOT TRADE: " + CEveAccountValidator::TradeBlockReason(m_env);
    if(m_flags.slActive && m_sl.LastCritical() != "")
       return m_sl.LastCritical();
    if(ArraySize(m_cfgErrors) > 0)
      {
-      clr = clrOrange;
-      return "CONFIG ERROR: " + m_cfgErrors[0];
+      clr = C'255,167,38';
+      return "SETTINGS ERROR: " + m_cfgErrors[0];
      }
    if(!m_flags.anyActive)
      {
-      clr = clrOrange;
-      return "WARNING: ALL AUTOMATIC RISK PROTECTION IS DISABLED";
+      clr = C'255,167,38';
+      return "WARNING: ALL AUTOMATIC PROTECTION IS OFF";
      }
    if(!m_timerOk)
-      return "TIMER NOT RUNNING - monitoring depends on ticks only";
-   clr = C'110,120,140';
+      return "TIMER NOT RUNNING - checks rely on ticks only";
+   clr = C'108,118,134';
    return "";
   }
 
@@ -845,6 +878,13 @@ void CEveRiskProtectorApp::RefreshDashboard(const bool force)
    d.slProtected   = m_sl.ProtectedCount();
    d.slUnprotected = m_sl.UnprotectedCount();
    d.slStatus      = m_sl.Status();
+   d.trailActive   = m_trail.TrailingOn();
+   d.trailStart    = m_cfg.trailingStartIDR;
+   d.trailGroups   = m_trail.TrailGroups();
+   d.lockedProfit  = m_trail.LockedProfit();
+   d.tpActive      = m_trail.TPOn();
+   d.tpTarget      = m_cfg.tpBasketIDR;
+   d.tpGroups      = m_trail.TPGroups();
    d.lockLoss      = m_cfg.lockAfterGlobalLoss;
    d.lockProfit    = m_cfg.lockAfterGlobalProfit;
    d.cancelPending = m_cfg.cancelPendingWhenLocked;

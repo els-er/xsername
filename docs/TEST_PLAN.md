@@ -1,4 +1,4 @@
-# Rencana Uji & Bukti — EVE IDR Risk Protector v1.00
+# Rencana Uji & Bukti — EVE IDR Risk Protector v1.10
 
 Ada empat lapisan uji:
 
@@ -39,6 +39,12 @@ Jalankan script `EVE_Risk_UnitTests`. Target: `0 failed`. Hasil: `MQL5\Files\EVE
 | T18 | Jalur lock lewat state machine | ARMED → … → LOCKED → reset → ARMED |
 | T25 | Klasifikasi retcode | DONE sukses, REQUOTE retry, MARKET_CLOSED slow, INVALID_FILL rotasi filling |
 | K-03/K-04 | Validasi config | input invalid hanya mematikan fiturnya sendiri; lock tanpa reset ditolak |
+| T26 | TP keranjang BUY / SELL 0,10 lot, target 300k | TP 2001,88 / 1998,12 (tick pertama yang mencapai target); legalitas TP |
+| T27 | TP keranjang contoh user (0,02 + 0,05) | satu TP 2004,61, profit keranjang Rp300.320 |
+| T28 | Aturan refresh TP (toleransi 1%) | TP kosong dipasang; TP dalam toleransi tidak diubah; TP jauh diperbarui |
+| T29 | Trailing BUY: profit 320k, jarak 50k, langkah 10k | SL 2001,69 (kunci Rp270.400); +30.400 → geser; +6.400 → tidak; tidak pernah mundur; SL legal terdekat 2001,99 |
+| T30 | Trailing SELL (cermin) | SL 1998,31; SL legal terdekat 1998,01; tidak pernah mundur |
+| Config v1.10 | Trailing/TP invalid; trailing + never-widen OFF | hanya fitur itu yang mati; never-widen dipaksa ON |
 
 ---
 
@@ -50,6 +56,7 @@ Invariant yang dicek setiap event:
 - **INV1/INV2:** selama `ARMED`, floating tidak pernah ≤ −limit atau ≥ target setelah siklus proteksi berjalan.
 - **INV3:** jika semua posisi punya SL dan tidak ada operasi in-flight, `Σ loss di SL ≤ budget`.
 - **INV4:** saat `LOCKED` (policy close), posisi baru hilang dalam ≤ 60 detik waktu tester.
+- **INV5 (v1.10):** SL sebuah posisi tidak pernah bergerak menjauh dari pasar dan tidak pernah dihapus (never-widen + trailing).
 
 | Skenario | Yang diuji | Lulus jika |
 |---|---|---|
@@ -57,6 +64,7 @@ Invariant yang dicek setiap event:
 | 2 Lock ON | trigger → LOCKED → entry saat LOCKED ditutup → reset → ARMED | FAILURES 0, `locks ≥ 1`, `manual resets ≥ 1` |
 | 3 Profit target | close-all di target net, lock OFF, entry ulang | FAILURES 0, ada trigger |
 | 4 Lock OFF | close-all lalu entry ulang langsung | FAILURES 0 |
+| 5 Trailing + TP | trailing keranjang dan TP keranjang aktif bersama | FAILURES 0 (termasuk INV5) |
 
 ---
 
@@ -95,15 +103,26 @@ Isi kolom "Hasil" saat menguji.
 | D16 | Ganti input saat LOCKED (mis. lock jadi OFF) | tetap LOCKED sampai reset | |
 | D17 | Pasang di akun non-IDR (mis. USD demo) | `SAFE_DISABLED`, tidak ada aksi | |
 | D18 | Close ditolak (uji saat market tutup, mis. akhir pekan, dengan limit yang sudah terlewati) | `CLOSE_FAILED`, retry tiap 5 detik, sukses saat market buka | |
+| D19 | Trailing ON (start 20.000, jarak 10.000, langkah 2.000), BUY 0,01 sampai profit > 20.000 | SL pindah ke harga yang mengunci ± profit − 10.000; hanya maju | |
+| D20 | Saat trailing jalan, harga berbalik | SL tidak mundur; kena SL dengan profit terkunci | |
+| D21 | TP ON (20.000), 2 entry BUY lot berbeda | kedua posisi punya TP yang sama; profit keranjang di TP ≈ 20.000 | |
+| D22 | Tambah entry ketiga saat TP aktif | TP semua posisi dihitung ulang (satu harga) | |
+| D23 | Ubah TP manual saat TP ON | EA menyamakan lagi ke TP keranjang | |
+| D24 | Panel: ganti `Panel position` ke Top right, klik [-] lalu [+] | panel pindah pojok, mengecil/membesar, teks tidak bertumpuk (cek juga skala Windows 125%/150%) | |
+| D25 | `Send orders in parallel` ON vs OFF, close-all 5 posisi | keduanya menutup semua; ON terasa lebih cepat; log `SENT_ASYNC` lalu `VERIFIED CLOSED` | |
 
 ---
 
-## E. Status bukti (v1.00)
+## E. Status bukti
 
 | Item | Status |
 |---|---|
 | Cek silang Python (C) | **Dijalankan oleh Claude**. Semua angka cocok dengan ekspektasi unit test (lihat `tests/solver_mirror_check.out.txt`). |
-| Compile MQL5 | **Lulus** — dilaporkan user: 0 error. |
-| Unit test MQL5 (A) | **Lulus** — dilaporkan user: 0 failed. |
+| Compile MQL5 v1.00 | **Lulus** — dilaporkan user: 0 error. |
+| Unit test MQL5 v1.00 (A) | **Lulus** — dilaporkan user: 0 failed. |
+| Uji pakai v1.00 di MT5 | Dilaporkan user: jalan; masukan → v1.10 (bahasa, trailing/TP, panel). |
+| Cek silang Python v1.10 (TP/trailing) | **Dijalankan oleh Claude**, angka T26–T30 cocok (`tests/solver_mirror_check.out.txt`). |
+| Compile MQL5 v1.10 | **Belum** — menunggu compile oleh user. |
+| Unit test MQL5 v1.10 | **Belum** — menunggu user. |
 | Harness tester (B) | **Belum dijalankan.** Menunggu user. |
 | Checklist demo (D) | **Belum dijalankan.** Menunggu user. |

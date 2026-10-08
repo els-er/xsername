@@ -10,70 +10,77 @@
 //| to an XAUUSD chart does NOT limit it to XAUUSD.                   |
 //|                                                                  |
 //| All money inputs are in IDR (Rupiah). The account currency must   |
-//| be IDR, otherwise the EA stays in SAFE_DISABLED.                  |
+//| be IDR, otherwise the EA stays DISABLED.                          |
 //|                                                                  |
-//| A limit is a TRIGGER THRESHOLD, not a guaranteed realized result: |
-//| price movement, spread, slippage, latency and gaps can make the   |
-//| realized loss/profit differ from the configured amount.           |
+//| A limit is a TRIGGER, not a guaranteed result: price movement,    |
+//| spread, slippage, latency and gaps can make the realized          |
+//| loss/profit differ from the amount you set.                       |
 //+------------------------------------------------------------------+
 #property copyright   "EVE"
-#property version     "1.00"
-#property description "EVE IDR Risk Protector v1.00 - risk-control EA (never opens trades)."
-#property description "Scope: ALL positions in the account (all symbols, manual + other EAs)."
-#property description "Global floating LOSS close-all, floating PROFIT close-all, aggregate IDR Stop Loss."
-#property description "All amounts in IDR. Limits are trigger thresholds, not guaranteed fill results."
+#property version     "1.10"
+#property description "EVE IDR Risk Protector v1.10 - risk-control EA (never opens trades)."
+#property description "Works on ALL positions in the account (all symbols, manual + other EAs)."
+#property description "Max total loss, profit target, auto stop loss, trailing stop and basket TP - all in IDR."
+#property description "Limits are triggers, not guaranteed fill results."
 
 #include <EVE_Risk\RiskProtectorApp.mqh>
 
 //+------------------------------------------------------------------+
-//| Inputs                                                           |
+//| Inputs (simple English, all money in IDR)                        |
 //+------------------------------------------------------------------+
-input group "=== SCOPE: ALL POSITIONS IN THIS ACCOUNT (every symbol, manual + other EAs) ==="
-input ENUM_EVE_SCOPE ProtectionScope = EVE_SCOPE_ALL_ACCOUNT_POSITIONS;                   // PROTECTION SCOPE
+input group "1. MAX TOTAL LOSS - closes ALL positions"
+input ENUM_EVE_ONOFF UseMaxTotalLoss  = EVE_ON;     // Close all when total loss reaches the limit
+input long           MaxTotalLossIDR  = 500000;     // Max total loss (IDR)
+input ENUM_EVE_ONOFF LockAfterMaxLoss = EVE_OFF;    // Lock EA after max loss (needs manual reset)
 
-input group "=== A. GLOBAL FLOATING LOSS PROTECTION (IDR) - closes ALL positions ==="
-input bool EnableGlobalFloatingLossProtection = true;                                     // ENABLE GLOBAL FLOATING LOSS PROTECTION
-input long MaxGlobalFloatingLossIDR           = 500000;                                   // MAX GLOBAL FLOATING LOSS (IDR)
-input bool LockAfterGlobalTrigger             = false;                                    // LOCK AFTER GLOBAL LOSS TRIGGER
-input bool RequireManualReset                 = true;                                     // REQUIRE MANUAL RESET (must be true if lock ON)
+input group "2. PROFIT TARGET - closes ALL positions"
+input ENUM_EVE_ONOFF UseProfitTarget        = EVE_OFF;  // Close all when total profit reaches the target
+input long           ProfitTargetIDR        = 500000;   // Profit target (IDR)
+input ENUM_EVE_ONOFF LockAfterProfitTarget  = EVE_OFF;  // Lock EA after profit target (needs manual reset)
 
-input group "=== B. GLOBAL FLOATING PROFIT AUTO-CLOSE (IDR) - closes ALL positions ==="
-input bool EnableGlobalFloatingProfitAutoClose = false;                                   // ENABLE GLOBAL FLOATING PROFIT AUTO-CLOSE
-input long GlobalFloatingProfitTargetIDR       = 500000;                                  // GLOBAL FLOATING PROFIT TARGET (IDR)
-input bool LockAfterGlobalProfitTrigger        = false;                                   // LOCK AFTER GLOBAL PROFIT TRIGGER
-input bool RequireManualResetAfterProfit       = false;                                   // REQUIRE MANUAL RESET AFTER PROFIT (must be true if lock ON)
+input group "3. AUTO STOP LOSS - SL on every position (on the broker server)"
+input ENUM_EVE_ONOFF         UseAutoSL       = EVE_ON;                            // Put an SL on every position
+input long                   MaxSLLossIDR    = 500000;                            // Max total loss if all SLs are hit (IDR)
+input ENUM_EVE_SL_ALLOCATION SLMode          = EVE_SL_ALLOC_BASKET_COMMON_PRICE;  // SL mode
+input ENUM_EVE_SL_FAILSAFE   IfSLNotPossible = EVE_FAILSAFE_CLOSE_POSITION;       // If an SL cannot be placed within the limit
 
-input group "=== C. LOCK MODE (only when a lock above is ON) ==="
-input ENUM_EVE_LOCK_NEWPOS_POLICY LockedNewPositionPolicy = EVE_LOCKPOL_CLOSE_IMMEDIATELY; // NEW POSITION WHILE LOCKED
-input bool CancelPendingOrdersWhenLocked = true;                                          // CANCEL PENDING ORDERS WHEN LOCKED
+input group "4. TRAILING STOP - per basket (same symbol + direction)"
+input ENUM_EVE_ONOFF UseTrailingStop   = EVE_OFF;   // Trailing stop
+input long           TrailStartIDR     = 100000;    // Start when basket profit reaches (IDR)
+input long           TrailDistanceIDR  = 50000;     // Keep this much below the highest profit (IDR)
+input long           TrailStepIDR      = 10000;     // Move SL only when locked profit grows by (IDR)
 
-input group "=== D. AGGREGATE IDR STOP LOSS (server-side SL on every position) ==="
-input bool EnableAggregateIDRSL                      = true;                              // ENABLE AGGREGATE IDR SL
-input long MaxAggregateSLRiskIDR                     = 500000;                            // MAX AGGREGATE SL RISK (IDR) - total loss if all SLs hit
-input bool AutoApplySLToNewPositions                 = true;                              // AUTO-APPLY SL TO NEW POSITIONS
-input bool RebalanceExistingPositionsOnNewEntry      = true;                              // REBALANCE EXISTING POSITIONS ON NEW ENTRY
-input ENUM_EVE_SL_ALLOCATION SLAllocationMethod      = EVE_SL_ALLOC_BASKET_COMMON_PRICE;  // SL ALLOCATION METHOD
-input bool PreserveMoreProtectiveExistingSL          = true;                              // PRESERVE MORE PROTECTIVE EXISTING SL (never widen)
-input ENUM_EVE_SL_FAILSAFE FailSafeWhenCompliantSLImpossible = EVE_FAILSAFE_CLOSE_POSITION; // FAIL-SAFE WHEN COMPLIANT SL IMPOSSIBLE
-input double SLBudgetSafetyMarginPct                 = 1.0;                               // SL BUDGET SAFETY MARGIN (%) vs USD/IDR drift
-input int SLExtraBufferTicks                         = 1;                                 // SL EXTRA DISTANCE BUFFER (ticks) beyond broker stop level
-input int SLModifyFailuresBeforeFailSafe             = 5;                                 // SL MODIFY FAILURES BEFORE FAIL-SAFE
+input group "5. TAKE PROFIT - per basket (same symbol + direction)"
+input ENUM_EVE_ONOFF UseBasketTP = EVE_OFF;         // Take profit
+input long           BasketTPIDR = 300000;          // Close the basket at this profit (IDR)
 
-input group "=== EXECUTION / RETRY / VERIFICATION ==="
-input int CloseRetryCount                  = 5;                                           // CLOSE RETRY COUNT (fast burst)
-input int CloseRetryDelayMs                = 250;                                         // CLOSE RETRY DELAY (ms)
-input int VerificationTimeoutMs            = 5000;                                        // VERIFICATION TIMEOUT (ms)
-input int PersistentRetryIntervalMs        = 1000;                                        // PERSISTENT RETRY INTERVAL AFTER BURST (ms)
-input int EmergencyCloseMaxDeviationPoints = 1000;                                        // EMERGENCY CLOSE MAX DEVIATION (points)
-input int ReconciliationIntervalMs         = 250;                                         // RECONCILIATION TIMER (ms)
+input group "6. WHEN THE EA IS LOCKED"
+input ENUM_EVE_LOCK_NEWPOS_POLICY NewPositionWhenLocked   = EVE_LOCKPOL_CLOSE_IMMEDIATELY; // New position while locked
+input ENUM_EVE_ONOFF              DeletePendingWhenLocked = EVE_ON;                        // Delete pending orders while locked
 
-input group "=== NOTIFICATIONS / LOG / DASHBOARD ==="
-input bool EnablePushNotifications = true;                                                // PUSH NOTIFICATIONS (MetaQuotes ID)
-input bool EnableAlerts            = true;                                                // ALERT POPUPS FOR CRITICAL EVENTS
-input bool EnableFileLog           = true;                                                // WRITE DAILY LOG FILE (MQL5\Files)
-input bool ShowDashboard           = true;                                                // SHOW DASHBOARD
-input int  DashboardX              = 10;                                                  // DASHBOARD X (px)
-input int  DashboardY              = 25;                                                  // DASHBOARD Y (px)
+input group "7. PANEL AND ALERTS"
+input ENUM_EVE_ONOFF  ShowPanel      = EVE_ON;                  // Show panel
+input ENUM_EVE_CORNER PanelPosition  = EVE_CORNER_LEFT_UPPER;   // Panel position
+input int             PanelOffsetX   = 10;                      // Panel distance from side (px)
+input int             PanelOffsetY   = 30;                      // Panel distance from top/bottom (px)
+input ENUM_EVE_ONOFF  PhoneAlerts    = EVE_ON;                  // Alerts to phone (set MetaQuotes ID in MT5)
+input ENUM_EVE_ONOFF  PopupAlerts    = EVE_ON;                  // Popup alerts for important events
+
+input group "8. ADVANCED - keep the default if unsure"
+input ENUM_EVE_ONOFF RecalcSLOnNewEntry   = EVE_ON;   // Recalculate basket SL on a new entry
+input ENUM_EVE_ONOFF NeverLoosenSL        = EVE_ON;   // Never move an SL further away
+input ENUM_EVE_ONOFF SLForNewPositions    = EVE_ON;   // Put SL on new positions (OFF = warning only)
+input double         FXSafetyMarginPct    = 1.0;      // SL safety margin for USD/IDR moves (%)
+input int            SLExtraTicks         = 1;        // Extra SL distance from the broker limit (ticks)
+input int            MaxSLErrors          = 5;        // Close a position after this many SL errors
+input int            FastCloseRetries     = 5;        // Fast close retries
+input int            FastRetryDelayMs     = 250;      // Fast retry delay (ms)
+input int            BrokerConfirmWaitMs  = 5000;     // Wait for broker confirmation (ms)
+input int            SlowRetryDelayMs     = 1000;     // Retry delay after the fast retries (ms)
+input int            MaxSlippagePoints    = 1000;     // Max slippage for emergency close (points)
+input int            CheckIntervalMs      = 250;      // Account check interval (ms)
+input ENUM_EVE_ONOFF SendOrdersInParallel = EVE_ON;   // Send orders in parallel (faster)
+input ENUM_EVE_ONOFF SaveLogFile          = EVE_ON;   // Save a daily log file
 
 CEveRiskProtectorApp g_app;
 
@@ -82,39 +89,55 @@ int OnInit()
   {
    SEveConfig c;
    EveConfigSetDefaults(c);
-   c.scope                          = ProtectionScope;
-   c.enableGlobalLoss               = EnableGlobalFloatingLossProtection;
-   c.maxGlobalLossIDR               = MaxGlobalFloatingLossIDR;
-   c.lockAfterGlobalLoss            = LockAfterGlobalTrigger;
-   c.requireManualResetLoss         = RequireManualReset;
-   c.enableGlobalProfit             = EnableGlobalFloatingProfitAutoClose;
-   c.globalProfitTargetIDR          = GlobalFloatingProfitTargetIDR;
-   c.lockAfterGlobalProfit          = LockAfterGlobalProfitTrigger;
-   c.requireManualResetProfit       = RequireManualResetAfterProfit;
-   c.lockedNewPositionPolicy        = LockedNewPositionPolicy;
-   c.cancelPendingWhenLocked        = CancelPendingOrdersWhenLocked;
-   c.enableAggregateSL              = EnableAggregateIDRSL;
-   c.maxAggregateSLRiskIDR          = MaxAggregateSLRiskIDR;
-   c.autoApplySLToNewPositions      = AutoApplySLToNewPositions;
-   c.rebalanceOnNewEntry            = RebalanceExistingPositionsOnNewEntry;
-   c.slAllocation                   = SLAllocationMethod;
-   c.preserveMoreProtectiveSL       = PreserveMoreProtectiveExistingSL;
-   c.slFailSafe                     = FailSafeWhenCompliantSLImpossible;
-   c.slSafetyMarginPct              = SLBudgetSafetyMarginPct;
-   c.slExtraBufferTicks             = SLExtraBufferTicks;
-   c.slModifyFailuresBeforeFailSafe = SLModifyFailuresBeforeFailSafe;
-   c.closeRetryCount                = CloseRetryCount;
-   c.closeRetryDelayMs              = CloseRetryDelayMs;
-   c.verificationTimeoutMs          = VerificationTimeoutMs;
-   c.persistentRetryIntervalMs      = PersistentRetryIntervalMs;
-   c.emergencyDeviationPoints       = EmergencyCloseMaxDeviationPoints;
-   c.reconciliationIntervalMs       = ReconciliationIntervalMs;
-   c.enablePush                     = EnablePushNotifications;
-   c.enableAlerts                   = EnableAlerts;
-   c.enableFileLog                  = EnableFileLog;
-   c.showDashboard                  = ShowDashboard;
-   c.dashboardX                     = DashboardX;
-   c.dashboardY                     = DashboardY;
+   c.scope                          = EVE_SCOPE_ALL_ACCOUNT_POSITIONS;
+   //--- 1. max total loss
+   c.enableGlobalLoss               = (UseMaxTotalLoss == EVE_ON);
+   c.maxGlobalLossIDR               = MaxTotalLossIDR;
+   c.lockAfterGlobalLoss            = (LockAfterMaxLoss == EVE_ON);
+   c.requireManualResetLoss         = true;    // a lock is always cleared by manual reset only
+   //--- 2. profit target
+   c.enableGlobalProfit             = (UseProfitTarget == EVE_ON);
+   c.globalProfitTargetIDR          = ProfitTargetIDR;
+   c.lockAfterGlobalProfit          = (LockAfterProfitTarget == EVE_ON);
+   c.requireManualResetProfit       = true;
+   //--- 3. auto stop loss
+   c.enableAggregateSL              = (UseAutoSL == EVE_ON);
+   c.maxAggregateSLRiskIDR          = MaxSLLossIDR;
+   c.slAllocation                   = SLMode;
+   c.slFailSafe                     = IfSLNotPossible;
+   //--- 4. trailing stop
+   c.trailingEnabled                = (UseTrailingStop == EVE_ON);
+   c.trailingStartIDR               = TrailStartIDR;
+   c.trailingDistanceIDR            = TrailDistanceIDR;
+   c.trailingStepIDR                = TrailStepIDR;
+   //--- 5. take profit
+   c.tpEnabled                      = (UseBasketTP == EVE_ON);
+   c.tpBasketIDR                    = BasketTPIDR;
+   //--- 6. lock
+   c.lockedNewPositionPolicy        = NewPositionWhenLocked;
+   c.cancelPendingWhenLocked        = (DeletePendingWhenLocked == EVE_ON);
+   //--- 7. panel and alerts
+   c.showDashboard                  = (ShowPanel == EVE_ON);
+   c.dashboardCorner                = PanelPosition;
+   c.dashboardX                     = PanelOffsetX;
+   c.dashboardY                     = PanelOffsetY;
+   c.enablePush                     = (PhoneAlerts == EVE_ON);
+   c.enableAlerts                   = (PopupAlerts == EVE_ON);
+   //--- 8. advanced
+   c.rebalanceOnNewEntry            = (RecalcSLOnNewEntry == EVE_ON);
+   c.preserveMoreProtectiveSL       = (NeverLoosenSL == EVE_ON);
+   c.autoApplySLToNewPositions      = (SLForNewPositions == EVE_ON);
+   c.slSafetyMarginPct              = FXSafetyMarginPct;
+   c.slExtraBufferTicks             = SLExtraTicks;
+   c.slModifyFailuresBeforeFailSafe = MaxSLErrors;
+   c.closeRetryCount                = FastCloseRetries;
+   c.closeRetryDelayMs              = FastRetryDelayMs;
+   c.verificationTimeoutMs          = BrokerConfirmWaitMs;
+   c.persistentRetryIntervalMs      = SlowRetryDelayMs;
+   c.emergencyDeviationPoints       = MaxSlippagePoints;
+   c.reconciliationIntervalMs       = CheckIntervalMs;
+   c.asyncSend                      = (SendOrdersInParallel == EVE_ON);
+   c.enableFileLog                  = (SaveLogFile == EVE_ON);
    c.testAllowAnyCurrency           = false;   // production: IDR is mandatory
    return g_app.Init(c);
   }
@@ -142,7 +165,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
                         const MqlTradeRequest &request,
                         const MqlTradeResult &result)
   {
-   g_app.OnTradeTransactionEvent(trans);
+   g_app.OnTradeTransactionEvent(trans, request, result);
   }
 
 //+------------------------------------------------------------------+

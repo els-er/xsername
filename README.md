@@ -1,4 +1,4 @@
-# EVE IDR Risk Protector (MT5) — v1.00
+# EVE IDR Risk Protector (MT5) — v1.10
 
 EA **pengendali risiko** untuk MetaTrader 5 (akun Exness Pro dengan mata uang **IDR**).
 
@@ -6,17 +6,28 @@ EA **pengendali risiko** untuk MetaTrader 5 (akun Exness Pro dengan mata uang **
 
 ## Fitur
 
-| Fitur | Ringkasan |
-|---|---|
-| **A. Global Floating Loss** | Jika total floating P/L **semua posisi di akun** ≤ −`MaxGlobalFloatingLossIDR`, **semua posisi ditutup**. |
-| **B. Global Floating Profit** | Jika total floating P/L **net** ≥ `GlobalFloatingProfitTargetIDR`, **semua posisi ditutup**. ON/OFF terpisah. |
-| **C. Lock** | Opsional. Setelah close-all, EA masuk `LOCKED`: posisi baru langsung ditutup dan pending order dihapus, sampai Anda menekan **RESET PROTECTION** (dua klik). Default **OFF**, jadi Anda bisa langsung entry lagi. |
-| **D. Aggregate IDR SL** | Memasang SL server-side di setiap posisi. Total kerugian teoretis jika semua SL kena tidak melebihi `MaxAggregateSLRiskIDR`. Budget mengikuti berapa pun jumlah entry dan berapa pun lot-nya: satu harga SL bersama per simbol+arah. |
+| # | Fitur | Ringkasan |
+|---|---|---|
+| 1 | **Max total loss** | Jika total floating P/L **semua posisi di akun** ≤ −limit, **semua posisi ditutup**. |
+| 2 | **Profit target** | Jika total floating P/L **net** ≥ target, **semua posisi ditutup**. ON/OFF terpisah. |
+| 3 | **Auto stop loss** | SL server-side di setiap posisi. Total rugi teoretis jika semua SL kena tidak melebihi batas Rupiah. Satu harga SL bersama per keranjang (simbol + arah), sehingga mengikuti berapa pun entry dan lot-nya. |
+| 4 | **Trailing stop** *(baru v1.10)* | Per keranjang, dalam Rupiah. Mulai jalan saat profit keranjang mencapai nilai awal, lalu mengunci "profit tertinggi − jarak". SL hanya bergerak maju. |
+| 5 | **Basket TP** *(baru v1.10)* | TP server-side di harga saat profit keranjang = target Rupiah. Satu harga TP untuk semua entry keranjang. |
+| 6 | **Lock** | Opsional. Setelah close-all, EA terkunci sampai Anda menekan **RESET PROTECTION** dua kali. Default **OFF**, jadi Anda bisa langsung entry lagi. |
 
 Dasar perhitungan:
 - Hanya `POSITION_PROFIT`. Swap dan komisi **tidak** dihitung.
 - Semua nominal dalam **Rupiah**.
 - Cakupan: **semua posisi di akun** (semua simbol, semua magic number, manual maupun EA lain).
+
+Peningkatan lain di v1.10:
+- **Label input bahasa Inggris sederhana** dengan saklar ON/OFF. Pengaturan teknis dikumpulkan di grup *Advanced* paling bawah.
+- **Panel baru:**
+  - digambar ulang dan menyesuaikan skala layar (DPI), angka rata kanan sehingga tidak bertumpuk;
+  - bar progres, badge status, tombol minimize;
+  - posisi pojok bisa dipilih.
+- **Perintah dikirim paralel** (async). Close-all dan perubahan SL/TP untuk banyak posisi berangkat bersamaan.
+- **SL/TP posisi baru dipasang langsung** saat posisi muncul, tidak menunggu siklus timer.
 
 > **Penting:** nominal limit adalah **ambang pemicu**, bukan jaminan hasil realisasi. Pergerakan harga, spread, slippage, latensi, dan gap bisa membuat hasil akhir berbeda dari angka yang diset.
 
@@ -39,65 +50,106 @@ CHANGELOG.md
 
 ## Mulai cepat
 
-1. Salin folder `MQL5` ke Data Folder MT5 (*File → Open Data Folder*).
+1. Salin folder `MQL5` ke Data Folder MT5 (*File → Open Data Folder*), timpa file lama.
 2. Compile `EVE_IDR_RiskProtector.mq5` di MetaEditor (F7).
 3. Jalankan script `EVE_Risk_UnitTests` dan pastikan hasilnya **0 failed**.
-4. Pasang EA di **satu** chart (simbol apa saja) pada akun **demo IDR**. Aktifkan *Allow Algo Trading* dan tombol **Algo Trading**.
-5. Isi nominal Rupiah di tab Inputs.
+4. Pasang EA di **satu** chart pada akun **demo IDR**. Aktifkan *Allow Algo Trading* dan tombol **Algo Trading**.
 
 Langkah lengkap ada di [`docs/PANDUAN.md`](docs/PANDUAN.md).
 
 ## Parameter input
 
-Semua nominal dalam **IDR (Rupiah)**, berupa bilangan bulat.
+Label di bawah persis seperti yang tampil di tab Inputs MT5. Semua nominal dalam **IDR**, bilangan bulat.
 
-| Input | Default | Keterangan |
+### 1. MAX TOTAL LOSS — closes ALL positions
+
+| Label | Default | Keterangan |
 |---|---|---|
-| `ProtectionScope` | ALL ACCOUNT POSITIONS | Satu-satunya mode di v1.00. |
-| `EnableGlobalFloatingLossProtection` | true | Aktifkan close-all saat total floating rugi mencapai limit. |
-| `MaxGlobalFloatingLossIDR` | 500000 | **MAX GLOBAL FLOATING LOSS (IDR)**. Pemicu: total ≤ −nilai ini. |
-| `LockAfterGlobalTrigger` | **false** | Lock setelah trigger loss. Default OFF (keputusan user), jadi bisa langsung entry lagi. |
-| `RequireManualReset` | true | Wajib true jika lock loss ON. |
-| `EnableGlobalFloatingProfitAutoClose` | false | Aktifkan close-all saat target profit tercapai. |
-| `GlobalFloatingProfitTargetIDR` | 500000 | **GLOBAL FLOATING PROFIT TARGET (IDR)**. Pemicu: total net ≥ nilai ini. |
-| `LockAfterGlobalProfitTrigger` | false | Lock setelah trigger profit. |
-| `RequireManualResetAfterProfit` | false | Wajib true jika lock profit ON. |
-| `LockedNewPositionPolicy` | CLOSE IMMEDIATELY | Saat LOCKED: posisi baru langsung ditutup, atau alert saja. |
-| `CancelPendingOrdersWhenLocked` | true | Saat LOCKED: hapus semua pending order (juga sejak awal close-all jika lock berlaku). |
-| `EnableAggregateIDRSL` | true | Engine SL agregat ON/OFF. |
-| `MaxAggregateSLRiskIDR` | 500000 | **MAX AGGREGATE SL RISK (IDR)**: total rugi teoretis jika semua SL kena. Batas atas, bukan target. |
-| `AutoApplySLToNewPositions` | true | false = mode advisory: hanya memberi peringatan, tidak memasang SL, tidak close. |
-| `RebalanceExistingPositionsOnNewEntry` | true | Entry baru membuat SL basket dihitung ulang (hanya diketatkan). |
-| `SLAllocationMethod` | BASKET | BASKET = satu harga SL bersama per simbol+arah dari total semua entry. PROPORTIONAL = jatah tetap per posisi menurut lot (spek asli). |
-| `PreserveMoreProtectiveExistingSL` | true | SL yang lebih ketat tidak pernah dilebarkan. SL yang mengunci profit tidak pernah dilebarkan dalam kondisi apa pun. |
-| `FailSafeWhenCompliantSLImpossible` | CLOSE POSITION | Jika SL legal broker tidak bisa memenuhi budget: tutup posisi, atau biarkan terbuka dengan status UNPROTECTED + alert. |
-| `SLBudgetSafetyMarginPct` | 1.0 | SL dipasang di 99% budget supaya tidak terus dimodifikasi saat kurs USD/IDR bergerak. Aksi ulang baru terjadi jika risiko > 100%. |
-| `SLExtraBufferTicks` | 1 | Jarak tambahan dari stop level broker. |
-| `SLModifyFailuresBeforeFailSafe` | 5 | Jumlah penolakan modifikasi SL berturut-turut sebelum fail-safe. |
-| `CloseRetryCount` | 5 | Retry cepat saat close gagal. Setelah itu retry **persisten** selama posisi masih ada. |
-| `CloseRetryDelayMs` | 250 | Jeda retry cepat. |
-| `VerificationTimeoutMs` | 5000 | Batas tunggu verifikasi sebelum close/modifikasi dikirim ulang. |
-| `PersistentRetryIntervalMs` | 1000 | Jeda retry persisten. |
-| `EmergencyCloseMaxDeviationPoints` | 1000 | Slippage maksimum untuk close darurat (Instant execution). Diabaikan pada Market execution. |
-| `ReconciliationIntervalMs` | 250 | Interval timer rekonsiliasi seluruh akun. |
-| `EnablePushNotifications` | true | Push ke HP (MetaQuotes ID harus diisi di MT5). |
-| `EnableAlerts` | true | Popup alert untuk kejadian kritis. |
-| `EnableFileLog` | true | Log harian di `MQL5\Files\EVE_RiskProtector_<login>_<tanggal>.log`. |
-| `ShowDashboard`, `DashboardX`, `DashboardY` | true, 10, 25 | Panel di chart. |
+| Close all when total loss reaches the limit | ON | Close-all saat total floating rugi mencapai limit. |
+| Max total loss (IDR) | 500000 | Pemicu: total floating ≤ −nilai ini. |
+| Lock EA after max loss (needs manual reset) | OFF | ON = setelah close-all, EA terkunci sampai di-reset. |
+
+### 2. PROFIT TARGET — closes ALL positions
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Close all when total profit reaches the target | OFF | Close-all saat total floating **net** ≥ target. |
+| Profit target (IDR) | 500000 | Target profit total akun. |
+| Lock EA after profit target (needs manual reset) | OFF | Sama seperti lock di atas. |
+
+### 3. AUTO STOP LOSS — SL on every position
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Put an SL on every position | ON | Engine SL ON/OFF. |
+| Max total loss if all SLs are hit (IDR) | 500000 | Batas atas total rugi teoretis di level SL. |
+| SL mode | Basket | *Basket* = satu harga SL untuk semua entry (simbol + arah). *Per position* = jatah per posisi sesuai lot. |
+| If an SL cannot be placed within the limit | Close the position | Atau *Leave it open (warning only)*. |
+
+### 4. TRAILING STOP — per basket
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Trailing stop | OFF | ON/OFF. |
+| Start when basket profit reaches (IDR) | 100000 | Trailing mulai saat profit keranjang ≥ nilai ini. |
+| Keep this much below the highest profit (IDR) | 50000 | Profit yang dikunci = profit saat ini − jarak. SL hanya maju. |
+| Move SL only when locked profit grows by (IDR) | 10000 | Langkah minimal agar SL tidak dimodifikasi terlalu sering. |
+
+### 5. TAKE PROFIT — per basket
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Take profit | OFF | ON/OFF. |
+| Close the basket at this profit (IDR) | 300000 | TP server-side di harga saat profit keranjang = nilai ini. |
+
+### 6. WHEN THE EA IS LOCKED
+
+| Label | Default | Keterangan |
+|---|---|---|
+| New position while locked | Close it immediately | Atau *Leave it open (warning only)*. |
+| Delete pending orders while locked | ON | Hapus pending order selama terkunci. |
+
+### 7. PANEL AND ALERTS
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Show panel | ON | Panel di chart (tombol reset tetap muncul saat terkunci walau panel OFF). |
+| Panel position | Top left | Top left / Top right / Bottom left / Bottom right. |
+| Panel distance from side / top-bottom (px) | 10 / 30 | Jarak panel dari tepi chart. |
+| Alerts to phone (set MetaQuotes ID in MT5) | ON | Push notification MT5. |
+| Popup alerts for important events | ON | Popup alert. |
+
+### 8. ADVANCED — keep the default if unsure
+
+| Label | Default | Keterangan |
+|---|---|---|
+| Recalculate basket SL on a new entry | ON | Entry baru → SL keranjang dihitung ulang (hanya diketatkan). |
+| Never move an SL further away | ON | SL tidak pernah dijauhkan. Wajib ON saat trailing aktif. |
+| Put SL on new positions (OFF = warning only) | ON | OFF = SL otomatis hanya memberi peringatan. |
+| SL safety margin for USD/IDR moves (%) | 1.0 | SL dipasang di 99% batas agar tidak sering diubah saat kurs bergerak. |
+| Extra SL distance from the broker limit (ticks) | 1 | Jarak tambahan dari stop level broker. |
+| Close a position after this many SL errors | 5 | Penolakan SL berturut-turut sebelum fail-safe. |
+| Fast close retries / Fast retry delay (ms) | 5 / 250 | Retry cepat saat close gagal. Setelah itu retry lanjutan terus selama posisi masih ada. |
+| Wait for broker confirmation (ms) | 5000 | Batas tunggu sebelum perintah dikirim ulang. |
+| Retry delay after the fast retries (ms) | 1000 | Jeda retry lanjutan. |
+| Max slippage for emergency close (points) | 1000 | Untuk Instant execution. Diabaikan pada Market execution. |
+| Account check interval (ms) | 250 | Timer pengecekan seluruh akun. |
+| Send orders in parallel (faster) | ON | Semua perintah dalam satu siklus dikirim bersamaan (async). |
+| Save a daily log file | ON | `MQL5\Files\EVE_RiskProtector_<login>_<tanggal>.log`. |
 
 ## Keterbatasan penting
 
-1. **Ambang ≠ hasil.** Rugi atau profit realisasi bisa melewati angka yang diset (gap, slippage, spread, latensi, close berurutan).
-2. **Proteksi global hanya hidup selama MT5 dan EA berjalan dan terkoneksi.** Jika VPS mati, yang tersisa hanya SL server-side dari Feature D.
-3. **Bukan batas rugi harian.** Rugi yang sudah realized tidak dihitung. Dengan lock OFF, Anda bisa entry lagi setelah close-all (keputusan user).
-4. **Spread melebar saat rollover** bisa memicu close-all lebih awal pada posisi SELL, karena posisi SELL dinilai di harga Ask.
-5. **SL basket konservatif.** Profit sebuah entry tidak dipakai untuk melebarkan SL entry lain, jadi SL bisa sedikit lebih ketat dari titik "net = −budget".
-6. **SL mengikuti kurs.** Kerugian dalam IDR di level SL ikut kurs USD/IDR. EA mengetatkan SL bila risiko naik di atas budget, tapi hanya selama EA berjalan.
-7. **Posisi EA lain ikut dikelola.** Engine SL juga memasang SL dan bisa menutup posisi milik EA lain (keputusan user). EA lain yang memodifikasi SL bisa "berebut" dengan engine ini.
-8. **Satu instance per akun per terminal.** Instance kedua otomatis `STANDBY`. Dua terminal berbeda pada akun yang sama tidak bisa dicegah.
-9. **Tidak cocok untuk MetaQuotes Virtual Hosting.** Tombol reset tidak berfungsi di sana. Gunakan Windows VPS biasa (RDP).
-10. **Belum di-compile di lingkungan pengembangan.** Lihat `docs/FINAL_AUDIT.md` dan `docs/PANDUAN.md`.
+1. **Ambang ≠ hasil.** Rugi atau profit realisasi bisa melewati angka yang diset (gap, slippage, spread, latensi).
+2. **Proteksi global hanya hidup selama MT5 dan EA berjalan.** Jika VPS mati, yang tersisa hanya SL/TP server-side.
+3. **Bukan batas rugi harian.** Rugi yang sudah realized tidak dihitung (keputusan user).
+4. **Spread melebar saat rollover** bisa memicu close-all lebih awal pada posisi SELL.
+5. **SL keranjang konservatif.** Profit sebuah entry tidak dipakai untuk melonggarkan SL entry lain.
+6. **TP dan trailing mengatur semua posisi akun**, termasuk posisi EA lain. TP manual akan disamakan dengan TP keranjang selama fitur TP ON.
+7. **SL/TP mengikuti kurs.** Nilai Rupiah di level SL/TP ikut kurs USD/IDR. EA mengoreksinya hanya selama berjalan.
+8. **Satu instance per akun per terminal.** Instance kedua otomatis `STANDBY`.
+9. **Tidak cocok untuk MetaQuotes Virtual Hosting.** Gunakan Windows VPS biasa (RDP).
+10. **Delay jaringan.** Di WiFi rumah, jarak ke server broker menambah delay. Untuk eksekusi tercepat gunakan VPS dekat server broker.
 
 ## Versi
 
-v1.00 — lihat [`CHANGELOG.md`](CHANGELOG.md).
+v1.10 — lihat [`CHANGELOG.md`](CHANGELOG.md).

@@ -85,3 +85,73 @@ for v in [0,999,1000,500000,1000000,10500000,-500000,-0.4,499999.5,9e12]:
 print(round(sum([-166666.67,-166666.67,-166666.66]),2), sum([-166666.67,-166666.67,-166666.66]))
 print(round(sum([-166666.67,-166666.67,-166666.65]),2))
 print(math.floor(500000*(0.1/0.6)),math.floor(500000*(0.2/0.6)),math.floor(500000*(0.3/0.6)))
+
+# ---- v1.10: basket take profit / trailing stop (CEvePriceRiskCalculator::SolvePriceForProfit, ClosestLegalSL) ----
+import math
+EPS=1e-7; K=1600000.0
+def prof2(t,vol,op,cl): return ((cl-op) if t=='B' else (op-cl))*vol*K
+def gprof(g,price): return sum(prof2(p[0],p[1],p[2],price) for p in g)
+def pfi2(k,ts=0.01,d=2): return round(k*ts,d)
+def solve_profit(g,bid,ask,target,ts=0.01):
+    t=g[0][0]; ref=bid if t=='B' else ask
+    kRef=max(1,round(ref/ts)); maxP=max(ref,1)*10000
+    f=gprof(g,pfi2(kRef))
+    if t=='B':
+        if f>=target-EPS:
+            if gprof(g,pfi2(1))>=target-EPS: return pfi2(1)
+            a,b=1,kRef
+        else:
+            a=b=kRef; step=kRef; found=False
+            for _ in range(64):
+                c=b+step
+                if c*ts>maxP: break
+                if gprof(g,pfi2(c))>=target-EPS: b=c; found=True; break
+                a=b=c; step*=2
+            if not found: return None
+        while b-a>1:
+            m=a+(b-a)//2
+            if gprof(g,pfi2(m))>=target-EPS: b=m
+            else: a=m
+        return pfi2(b)
+    else:
+        if f>=target-EPS:
+            a=b=kRef; step=kRef; found=False
+            for _ in range(64):
+                c=b+step
+                if c*ts>maxP: break
+                if gprof(g,pfi2(c))<target-EPS: b=c; found=True; break
+                a=b=c; step*=2
+            if not found: return pfi2(a)
+        else:
+            if gprof(g,pfi2(1))<target-EPS: return None
+            a,b=1,kRef
+        while b-a>1:
+            m=a+(b-a)//2
+            if gprof(g,pfi2(m))>=target-EPS: a=m
+            else: b=m
+        return pfi2(a)
+def closest_legal(t,bid,ask,stops=0,buf=1,ts=0.01,pt=0.01):
+    d=stops*pt+buf*ts
+    if t=='B':
+        ml=bid-d; k=math.floor(ml/ts+1e-9)
+        while k>0 and k*ts>ml+ts*1e-6: k-=1
+        return pfi2(k)
+    ml=ask+d; k=math.ceil(ml/ts-1e-9)
+    while k*ts<ml-ts*1e-6: k+=1
+    return pfi2(k)
+cases=[
+ ('TP BUY 0.10@2000 target 300k',[('B',0.10,2000.00)],2000.00,2000.20,300000),
+ ('TP SELL 0.10@2000 target 300k',[('S',0.10,2000.00)],2000.00,2000.20,300000),
+ ('TP user basket target 300k',[('B',0.02,2006.25),('B',0.05,2000.20)],2000.00,2000.20,300000),
+ ('TRAIL BUY bid 2002 lock 270k',[('B',0.10,2000.00)],2002.00,2002.20,270000),
+ ('TRAIL SELL ask 1998 lock 270k',[('S',0.10,2000.00)],1997.80,1998.00,270000),
+ ('TRAIL BUY clamp lock 319k',[('B',0.10,2000.00)],2002.00,2002.20,319000),
+]
+for name,g,bid,ask,target in cases:
+    p=solve_profit(g,bid,ask,target)
+    step=0.01 if g[0][0]=='B' else -0.01
+    print('%-34s price=%.2f profit=%.2f | one tick earlier profit=%.2f'%(name,p,gprof(g,p),gprof(g,round(p-step,2))))
+print('closest legal BUY bid 2002:',closest_legal('B',2002.00,2002.20))
+print('closest legal SELL ask 1998:',closest_legal('S',1997.80,1998.00))
+for sl in (2001.50,2001.65,2001.80):
+    print('trail BUY cur SL',sl,'profit at cur',gprof([('B',0.10,2000.00)],sl))

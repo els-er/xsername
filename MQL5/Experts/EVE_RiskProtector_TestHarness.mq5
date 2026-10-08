@@ -9,7 +9,7 @@
 //| (EVE_IDR_RiskProtector.mq5) contains no position-opening code.   |
 //+------------------------------------------------------------------+
 #property copyright   "EVE"
-#property version     "1.00"
+#property version     "1.10"
 #property description "TEST HARNESS - Strategy Tester only. Opens scripted positions to test the protector."
 #property description "NEVER attach to a live or demo chart (it refuses to start outside the tester)."
 
@@ -20,13 +20,19 @@ enum ENUM_HARNESS_SCENARIO
    HS_BASKET_MULTI_ENTRY = 1, // 1: multi-entry basket (0.02 + 0.05 + SELL) - SL budget + loss trigger
    HS_LOCK_AND_REENTRY   = 2, // 2: loss trigger with LOCK ON, re-entry while locked, manual reset
    HS_PROFIT_TARGET      = 3, // 3: profit target close-all (lock OFF) and re-entry
-   HS_LOCK_OFF_REENTRY   = 4  // 4: loss trigger with LOCK OFF, immediate re-entry allowed
+   HS_LOCK_OFF_REENTRY   = 4, // 4: loss trigger with LOCK OFF, immediate re-entry allowed
+   HS_TRAILING_AND_TP    = 5  // 5: basket trailing stop + basket TP (SL must never move away)
   };
 
 input ENUM_HARNESS_SCENARIO Scenario       = HS_BASKET_MULTI_ENTRY; // SCENARIO
 input long   LossLimit                     = 500000;  // LOSS LIMIT (deposit currency units)
 input long   ProfitTarget                  = 500000;  // PROFIT TARGET (deposit currency units)
 input long   SLBudget                      = 500000;  // SL BUDGET (deposit currency units)
+input long   TrailStart                    = 100000;  // TRAILING START (deposit currency units)
+input long   TrailDistance                 = 50000;   // TRAILING DISTANCE (deposit currency units)
+input long   TrailStep                     = 10000;   // TRAILING STEP (deposit currency units)
+input long   BasketTP                      = 300000;  // BASKET TP (deposit currency units)
+input bool   ParallelOrders                = true;    // SEND ORDERS IN PARALLEL (async)
 input double LotA                          = 0.02;    // LOT ENTRY A
 input double LotB                          = 0.05;    // LOT ENTRY B
 input double LotC                          = 0.03;    // LOT ENTRY C (SELL)
@@ -45,6 +51,9 @@ int      g_resets = 0;
 ENUM_EVE_STATE g_prevState = EVE_STATE_INIT;
 datetime g_lockedPositionSince = 0;
 string   g_failLog[];
+ulong    g_slTickets[];   // INV5: last SL seen per ticket
+double   g_slValues[];
+int      g_slTypes[];
 
 //+------------------------------------------------------------------+
 void HarnessFail(const string msg)
@@ -107,6 +116,13 @@ int OnInit()
    c.testAllowAnyCurrency  = AllowNonIDRDepositForTest;
    if(Scenario == HS_PROFIT_TARGET)
       c.enableAggregateSL = false;   // let the profit target be reached instead of the SLs
+   c.trailingEnabled       = (Scenario == HS_TRAILING_AND_TP);
+   c.trailingStartIDR      = TrailStart;
+   c.trailingDistanceIDR   = TrailDistance;
+   c.trailingStepIDR       = TrailStep;
+   c.tpEnabled             = (Scenario == HS_TRAILING_AND_TP);
+   c.tpBasketIDR           = BasketTP;
+   c.asyncSend             = ParallelOrders;
    g_nextActionTime = 0;
    g_step = 0;
    return g_app.Init(c);
@@ -153,6 +169,45 @@ void CheckInvariants(const bool afterFullCycle)
      }
    else
       g_lockedPositionSince = 0;
+
+   //--- INV5: with never-widen ON, an SL never moves further away from the market
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong t = PositionGetTicket(i);
+      if(t == 0)
+         continue;
+      double sl = PositionGetDouble(POSITION_SL);
+      int type = (int)PositionGetInteger(POSITION_TYPE);
+      int idx = -1;
+      for(int k = 0; k < ArraySize(g_slTickets); k++)
+         if(g_slTickets[k] == t)
+           {
+            idx = k;
+            break;
+           }
+      if(idx < 0)
+        {
+         idx = ArraySize(g_slTickets);
+         ArrayResize(g_slTickets, idx + 1);
+         ArrayResize(g_slValues, idx + 1);
+         ArrayResize(g_slTypes, idx + 1);
+         g_slTickets[idx] = t;
+         g_slValues[idx] = sl;
+         g_slTypes[idx] = type;
+         continue;
+        }
+      double prev = g_slValues[idx];
+      if(prev > 0.0 && sl > 0.0)
+        {
+         bool looser = (type == (int)POSITION_TYPE_BUY) ? (sl < prev - 0.0000001) : (sl > prev + 0.0000001);
+         if(looser)
+            HarnessFail("SL of #" + IntegerToString((long)t) + " moved AWAY from the market: " +
+                        DoubleToString(prev, 5) + " -> " + DoubleToString(sl, 5));
+        }
+      if(prev > 0.0 && sl <= 0.0)
+         HarnessFail("SL of #" + IntegerToString((long)t) + " was REMOVED");
+      g_slValues[idx] = sl;
+     }
 
    //--- bookkeeping
    if(st != g_prevState)
@@ -222,6 +277,7 @@ void RunScenario(void)
 
       case HS_PROFIT_TARGET:
       case HS_LOCK_OFF_REENTRY:
+      case HS_TRAILING_AND_TP:
          if(st != EVE_STATE_ARMED)
             return;
          if(PositionsTotal() == 0)
@@ -250,7 +306,7 @@ void OnTimer()
 
 void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
   {
-   g_app.OnTradeTransactionEvent(trans);
+   g_app.OnTradeTransactionEvent(trans, request, result);
   }
 
 //+------------------------------------------------------------------+

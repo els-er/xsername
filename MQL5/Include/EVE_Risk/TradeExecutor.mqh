@@ -9,6 +9,11 @@
 //|   as the position exists (audit K-02)                            |
 //| - closing deals always carry request.position and never exceed   |
 //|   the live position volume (netting safety)                      |
+//| - SL and TP of a position are changed in ONE request; requests of |
+//|   the same cycle are merged (SL: most protective wins)           |
+//| - optional asynchronous sending (OrderSendAsync): all requests of |
+//|   a cycle leave at once; broker replies arrive via                |
+//|   OnTradeTransaction (OnRequestResult) and state is re-verified  |
 //| This class never opens a position.                               |
 //+------------------------------------------------------------------+
 #ifndef EVE_RISK_TRADEEXECUTOR_MQH
@@ -34,7 +39,11 @@ struct SEveOp
    int               kind;
    int               purpose;
    string            symbol;
-   double            targetSL;
+   double            targetSL;          // EVE_KEEP = leave the SL as it is
+   double            targetTP;          // EVE_KEEP = leave the TP as it is
+   bool              slFromEngine;      // SL part requested by the aggregate SL engine
+   bool              sentAsync;         // last request sent with OrderSendAsync
+   uint              requestId;         // request_id of the last async request
    int               attempts;          // failed attempts
    int               sendCount;         // requests actually sent
    ulong             nextAttemptMs;
@@ -53,8 +62,10 @@ struct SEveOp
 struct SEveTicketCounter
   {
    ulong             ticket;
-   int               failures;
-   ulong             blockedUntilMs;
+   int               failures;          // SL-engine failures (count toward the fail-safe)
+   int               softFailures;      // trailing / TP failures (back-off only)
+   ulong             blockedUntilMs;    // hard / environment block (applies to every request)
+   ulong             softBlockedUntilMs; // back-off after trailing / TP failures (does not delay the SL engine)
    uint              lastRetcode;
   };
 
@@ -71,6 +82,7 @@ private:
    int               m_deviationPoints;
    bool              m_preserveSL;
    bool              m_hedging;
+   bool              m_async;
    string            m_lastFailure;
 
    int               FindOp(const ulong ticket, const int kind) const;
@@ -81,7 +93,8 @@ private:
    void              ScheduleRetry(const int i, const int rcClass, const string what);
    int               CounterIndex(const ulong ticket) const;
    int               EnsureCounter(const ulong ticket);
-   void              RegisterModifyFailure(const ulong ticket, const uint retcode);
+   void              RegisterModifyFailure(const ulong ticket, const uint retcode, const bool hard);
+   bool              Send(MqlTradeRequest &req, MqlTradeResult &res, const int i);
    void              BlockModify(const ulong ticket, const uint retcode);
    void              PruneCounters(void);
    void              Compact(void);
@@ -95,7 +108,10 @@ public:
                      CEveTradeExecutor(void);
    void              Init(CEveLogger *log, const SEveConfig &cfg, const bool hedging);
    void              RequestClose(const ulong ticket, const int purpose);
-   bool              RequestModifySL(const ulong ticket, const double sl, const int purpose);
+   bool              RequestStops(const ulong ticket, const double sl, const double tp, const int purpose);
+   bool              RequestModifySL(const ulong ticket, const double sl, const int purpose)
+     { return RequestStops(ticket, sl, EVE_KEEP, purpose); }
+   void              OnRequestResult(const MqlTradeRequest &request, const MqlTradeResult &result);
    void              RequestDeleteOrder(const ulong ticket, const int purpose);
    void              CancelModifyOps(const string why) { CancelOpsOfKind(EVE_OP_MODIFY_SL, why); }
    void              CancelOpsOfKind(const int kind, const string why);
@@ -109,6 +125,7 @@ public:
    int               ActiveOpCount(void) const;
    int               ModifyFailures(const ulong ticket) const;
    bool              IsModifyBlocked(const ulong ticket) const;
+   bool              IsSoftBlocked(const ulong ticket) const;
    void              ResetModifyCounter(const ulong ticket);
    string            LastFailure(void) const { return m_lastFailure; }
 
@@ -126,6 +143,7 @@ CEveTradeExecutor::CEveTradeExecutor(void) : m_log(NULL),
                                              m_deviationPoints(1000),
                                              m_preserveSL(true),
                                              m_hedging(true),
+                                             m_async(true),
                                              m_lastFailure("")
   {
   }
@@ -141,6 +159,7 @@ void CEveTradeExecutor::Init(CEveLogger *log, const SEveConfig &cfg, const bool 
    m_deviationPoints       = cfg.emergencyDeviationPoints;
    m_preserveSL            = cfg.preserveMoreProtectiveSL;
    m_hedging               = hedging;
+   m_async                 = cfg.asyncSend;
    ArrayResize(m_ops, 0);
    ArrayResize(m_counters, 0);
    m_lastFailure = "";
@@ -305,6 +324,10 @@ int CEveTradeExecutor::AddOp(const ulong ticket, const int kind, const int purpo
    m_ops[n].purpose           = purpose;
    m_ops[n].symbol            = symbol;
    m_ops[n].targetSL          = targetSL;
+   m_ops[n].targetTP          = EVE_KEEP;
+   m_ops[n].slFromEngine      = false;
+   m_ops[n].sentAsync         = false;
+   m_ops[n].requestId         = 0;
    m_ops[n].attempts          = 0;
    m_ops[n].sendCount         = 0;
    m_ops[n].nextAttemptMs     = 0;
@@ -342,16 +365,45 @@ void CEveTradeExecutor::RequestClose(const ulong ticket, const int purpose)
   }
 
 //+------------------------------------------------------------------+
-bool CEveTradeExecutor::RequestModifySL(const ulong ticket, const double sl, const int purpose)
+//| Requests an SL and/or TP change (EVE_KEEP = leave unchanged).     |
+//| Requests made in the same cycle for the same position are merged |
+//| into one TRADE_ACTION_SLTP: for the SL the most protective value |
+//| wins, for the TP the latest value wins. Refused while a request  |
+//| for this position is in flight or the position is being closed.  |
+//+------------------------------------------------------------------+
+bool CEveTradeExecutor::RequestStops(const ulong ticket, const double sl, const double tp, const int purpose)
   {
-   if(FindOp(ticket, EVE_OP_CLOSE) >= 0 || FindOp(ticket, EVE_OP_MODIFY_SL) >= 0)
+   if(sl <= 0.0 && tp <= 0.0)
       return false;
-   if(IsModifyBlocked(ticket))
+   if(FindOp(ticket, EVE_OP_CLOSE) >= 0)
       return false;
+   if(purpose == EVE_PURPOSE_SL_ENGINE ? IsModifyBlocked(ticket) : IsSoftBlocked(ticket))
+      return false;
+   int i = FindOp(ticket, EVE_OP_MODIFY_SL);
+   if(i >= 0)
+     {
+      if(m_ops[i].awaitingVerify || m_ops[i].sendCount > 0)
+         return false;   // in flight: the caller re-plans after verification
+      if(sl > 0.0)
+        {
+         ENUM_POSITION_TYPE ptype = POSITION_TYPE_BUY;
+         if(PositionSelectByTicket(ticket))
+            ptype = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         if(m_ops[i].targetSL <= 0.0 || CEvePriceRiskCalculator::IsMoreProtective(ptype, sl, m_ops[i].targetSL))
+            m_ops[i].targetSL = sl;
+         if(purpose == EVE_PURPOSE_SL_ENGINE)
+            m_ops[i].slFromEngine = true;
+        }
+      if(tp > 0.0)
+         m_ops[i].targetTP = tp;
+      return true;
+     }
    string symbol = "";
    if(PositionSelectByTicket(ticket))
       symbol = PositionGetString(POSITION_SYMBOL);
-   AddOp(ticket, EVE_OP_MODIFY_SL, purpose, symbol, sl);
+   int n = AddOp(ticket, EVE_OP_MODIFY_SL, purpose, symbol, (sl > 0.0) ? sl : EVE_KEEP);
+   m_ops[n].targetTP = (tp > 0.0) ? tp : EVE_KEEP;
+   m_ops[n].slFromEngine = (purpose == EVE_PURPOSE_SL_ENGINE && sl > 0.0);
    return true;
   }
 
@@ -461,23 +513,42 @@ int CEveTradeExecutor::EnsureCounter(const ulong ticket)
    ArrayResize(m_counters, n + 1);
    m_counters[n].ticket         = ticket;
    m_counters[n].failures       = 0;
+   m_counters[n].softFailures   = 0;
+   m_counters[n].softBlockedUntilMs = 0;
    m_counters[n].blockedUntilMs = 0;
    m_counters[n].lastRetcode    = 0;
    return n;
   }
 
 //+------------------------------------------------------------------+
-//| Counted failure with growing back-off (1 s, 2 s, ... max 10 s).  |
+//| Counted failure with growing back-off. Hard failures (an SL the  |
+//| aggregate SL engine needs) count toward the fail-safe (max 10 s  |
+//| back-off); soft failures (trailing / TP) only back off (max 30 s).|
 //+------------------------------------------------------------------+
-void CEveTradeExecutor::RegisterModifyFailure(const ulong ticket, const uint retcode)
+void CEveTradeExecutor::RegisterModifyFailure(const ulong ticket, const uint retcode, const bool hard)
   {
    int i = EnsureCounter(ticket);
-   m_counters[i].failures++;
+   int count = 0;
+   int cap = 10000;
+   if(hard)
+     {
+      m_counters[i].failures++;
+      count = m_counters[i].failures;
+     }
+   else
+     {
+      m_counters[i].softFailures++;
+      count = m_counters[i].softFailures;
+      cap = 30000;
+     }
    m_counters[i].lastRetcode = retcode;
-   int backoff = m_counters[i].failures * 1000;
-   if(backoff > 10000)
-      backoff = 10000;
-   m_counters[i].blockedUntilMs = GetTickCount64() + (ulong)backoff;
+   int backoff = count * 1000;
+   if(backoff > cap)
+      backoff = cap;
+   if(hard)
+      m_counters[i].blockedUntilMs = GetTickCount64() + (ulong)backoff;
+   else
+      m_counters[i].softBlockedUntilMs = GetTickCount64() + (ulong)backoff;
   }
 
 //+------------------------------------------------------------------+
@@ -504,6 +575,18 @@ bool CEveTradeExecutor::IsModifyBlocked(const ulong ticket) const
    if(i < 0)
       return false;
    return (GetTickCount64() < m_counters[i].blockedUntilMs);
+  }
+
+//+------------------------------------------------------------------+
+//| Blocked for trailing / TP requests (soft or hard back-off).      |
+//+------------------------------------------------------------------+
+bool CEveTradeExecutor::IsSoftBlocked(const ulong ticket) const
+  {
+   int i = CounterIndex(ticket);
+   if(i < 0)
+      return false;
+   ulong now = GetTickCount64();
+   return (now < m_counters[i].blockedUntilMs || now < m_counters[i].softBlockedUntilMs);
   }
 
 //+------------------------------------------------------------------+
@@ -597,6 +680,78 @@ void CEveTradeExecutor::ScheduleRetry(const int i, const int rcClass, const stri
   }
 
 //+------------------------------------------------------------------+
+//| Sends one request. With async sending, true only means that the  |
+//| terminal accepted it; the broker reply arrives in OnRequestResult |
+//| and the result is always re-verified from the live state.        |
+//+------------------------------------------------------------------+
+bool CEveTradeExecutor::Send(MqlTradeRequest &req, MqlTradeResult &res, const int i)
+  {
+   m_ops[i].sentAsync = false;
+   m_ops[i].requestId = 0;
+   if(m_async)
+     {
+      bool sentAsync = OrderSendAsync(req, res);
+      if(sentAsync)
+        {
+         m_ops[i].sentAsync = true;
+         m_ops[i].requestId = res.request_id;
+        }
+      return sentAsync;
+     }
+   return OrderSend(req, res);
+  }
+
+//+------------------------------------------------------------------+
+//| Broker reply of an asynchronous request (TRADE_TRANSACTION_REQUEST)|
+//+------------------------------------------------------------------+
+void CEveTradeExecutor::OnRequestResult(const MqlTradeRequest &request, const MqlTradeResult &result)
+  {
+   if(result.request_id == 0)
+      return;
+   int n = ArraySize(m_ops);
+   for(int i = 0; i < n; i++)
+     {
+      if(m_ops[i].done || !m_ops[i].sentAsync || !m_ops[i].awaitingVerify || m_ops[i].requestId != result.request_id)
+         continue;
+      uint rc = result.retcode;
+      m_ops[i].lastRetcode = rc;
+      int cls = ClassifyRetcode(rc);
+      string kind = EveOpKindName(m_ops[i].kind);
+      string tk = EveTicketStr(m_ops[i].ticket);
+      if(cls == EVE_RCC_SUCCESS || cls == EVE_RCC_NO_CHANGE)
+        {
+         LogInfo(kind, "Broker accepted " + tk + " -> " + RetcodeText(rc) + " (verifying state)");
+         return;
+        }
+      m_ops[i].awaitingVerify = false;
+      m_ops[i].sentAsync = false;
+      if(m_ops[i].kind == EVE_OP_MODIFY_SL)
+        {
+         if(cls == EVE_RCC_RETRY_SLOW)
+            BlockModify(m_ops[i].ticket, rc);
+         else
+            RegisterModifyFailure(m_ops[i].ticket, rc, m_ops[i].slFromEngine);
+         LogWarning("STOPS", "Broker REJECTED stops modification " + tk + " -> " + RetcodeText(rc) +
+                    " [" + EvePurposeName(m_ops[i].purpose) + "]");
+         m_ops[i].done = true;
+         return;
+        }
+      if(cls == EVE_RCC_GONE)
+        {
+         m_ops[i].nextAttemptMs = 0;   // next Process() verifies that it is gone
+         return;
+        }
+      if(cls == EVE_RCC_REFILL)
+        {
+         m_ops[i].fillingIndex++;
+         cls = EVE_RCC_RETRY;
+        }
+      ScheduleRetry(i, cls, "broker rejected " + tk + " -> " + RetcodeText(rc));
+      return;
+     }
+  }
+
+//+------------------------------------------------------------------+
 //| Close one position (closing deal only)                           |
 //+------------------------------------------------------------------+
 void CEveTradeExecutor::ProcessClose(const int i)
@@ -668,24 +823,28 @@ void CEveTradeExecutor::ProcessClose(const int i)
    req.comment      = EVE_RP_COMMENT + " " + EvePurposeName(m_ops[i].purpose);
 
    ResetLastError();
-   bool sent = OrderSend(req, res);
+   bool sent = Send(req, res, i);
    int err = GetLastError();
    m_ops[i].sendCount++;
    m_ops[i].lastRetcode = res.retcode;
    int cls = ClassifySendResult(res.retcode);
-   if(sent && res.retcode == 0)
-      cls = EVE_RCC_RETRY;
+   if(sent && m_ops[i].sentAsync)
+      cls = EVE_RCC_SUCCESS;
+   else
+      if(sent && res.retcode == 0)
+         cls = EVE_RCC_RETRY;
 
    string info = tk + " " + symbol + " " + EvePositionTypeName(ptype) + " vol " + DoubleToString(sendVol, 2) +
                  ((sendVol < volume) ? " (chunk of " + DoubleToString(volume, 2) + ")" : "") +
                  " @" + DoubleToString(req.price, digits) + " dev " + IntegerToString(m_deviationPoints) + "pt" +
-                 " fill " + EnumToString(req.type_filling) + " -> " + RetcodeText(res.retcode) +
-                 ((res.retcode == 0) ? " err " + IntegerToString(err) : "") +
-                 " deal " + IntegerToString((long)res.deal) + " [" + EvePurposeName(m_ops[i].purpose) + "]";
+                 " fill " + EnumToString(req.type_filling) + " -> " +
+                 (m_ops[i].sentAsync ? "SENT_ASYNC" : RetcodeText(res.retcode)) +
+                 ((res.retcode == 0 && !sent) ? " err " + IntegerToString(err) : "") +
+                 " [" + EvePurposeName(m_ops[i].purpose) + "]";
 
    if(cls == EVE_RCC_SUCCESS)
      {
-      LogInfo("CLOSE", "Close request accepted " + info);
+      LogInfo("CLOSE", "Close request " + (m_ops[i].sentAsync ? "sent " : "accepted ") + info);
       m_ops[i].awaitingVerify   = true;
       m_ops[i].volumeBefore     = volume;
       m_ops[i].verifyDeadlineMs = now + (ulong)m_verificationTimeoutMs;
@@ -718,7 +877,7 @@ void CEveTradeExecutor::ProcessClose(const int i)
   }
 
 //+------------------------------------------------------------------+
-//| Modify the SL of one position (TP is always kept)                |
+//| Modify SL and/or TP of one position in a single request          |
 //+------------------------------------------------------------------+
 void CEveTradeExecutor::ProcessModify(const int i)
   {
@@ -742,14 +901,19 @@ void CEveTradeExecutor::ProcessModify(const int i)
    if(ts <= 0.0)
       ts = 0.00001;
    int digits = s.digits;
-   double target = m_ops[i].targetSL;
+   double tSL = m_ops[i].targetSL;
+   double tTP = m_ops[i].targetTP;
+   bool wantSL = (tSL > 0.0);
+   bool wantTP = (tTP > 0.0);
+   bool slOk = (!wantSL || MathAbs(curSL - tSL) < ts * 0.5);
+   bool tpOk = (!wantTP || MathAbs(curTP - tTP) < ts * 0.5);
 
    //--- verified?
-   if(MathAbs(curSL - target) < ts * 0.5)
+   if(slOk && tpOk)
      {
       if(m_ops[i].sendCount > 0)
-         LogInfo("SL", "SL VERIFIED " + tk + " " + symbol + " SL=" + DoubleToString(curSL, digits) +
-                 " TP=" + DoubleToString(curTP, digits));
+         LogInfo("STOPS", "VERIFIED " + tk + " " + symbol + " SL=" + DoubleToString(curSL, digits) +
+                 " TP=" + DoubleToString(curTP, digits) + " [" + EvePurposeName(m_ops[i].purpose) + "]");
       ResetModifyCounter(ticket);
       m_ops[i].done = true;
       return;
@@ -758,37 +922,51 @@ void CEveTradeExecutor::ProcessModify(const int i)
      {
       if(now < m_ops[i].verifyDeadlineMs)
          return;
-      LogWarning("SL", "SL modification of " + tk + " NOT verified within " + IntegerToString(m_verificationTimeoutMs) +
-                 " ms (current SL " + DoubleToString(curSL, digits) + ", requested " + DoubleToString(target, digits) + ")");
-      RegisterModifyFailure(ticket, m_ops[i].lastRetcode);
+      LogWarning("STOPS", "Modification of " + tk + " NOT verified within " + IntegerToString(m_verificationTimeoutMs) +
+                 " ms (SL " + DoubleToString(curSL, digits) + " / wanted " + (wantSL ? DoubleToString(tSL, digits) : "keep") +
+                 ", TP " + DoubleToString(curTP, digits) + " / wanted " + (wantTP ? DoubleToString(tTP, digits) : "keep") + ")");
+      RegisterModifyFailure(ticket, m_ops[i].lastRetcode, m_ops[i].slFromEngine);
       m_ops[i].done = true;
       return;
      }
 
-   //--- never-widen guard (second line of defence after the SL manager)
-   if(curSL > 0.0 && !CEvePriceRiskCalculator::IsMoreProtective(ptype, target, curSL))
+   //--- never-widen guard for the SL part (second line of defence)
+   if(wantSL && !slOk && curSL > 0.0 && !CEvePriceRiskCalculator::IsMoreProtective(ptype, tSL, curSL))
      {
       bool locksProfit = CEvePriceRiskCalculator::StopLocksProfit(ptype, curSL, open);
       if(m_preserveSL || locksProfit)
         {
-         LogError("SL", "REFUSED SL change that would WIDEN the stop of " + tk + " (" + DoubleToString(curSL, digits) +
-                  " -> " + DoubleToString(target, digits) + ")" +
-                  (locksProfit ? " - current stop locks profit" : " - PreserveMoreProtectiveExistingSL is ON"));
-         m_ops[i].done = true;
-         return;
+         LogError("STOPS", "REFUSED SL change that would WIDEN the stop of " + tk + " (" + DoubleToString(curSL, digits) +
+                  " -> " + DoubleToString(tSL, digits) + ")" +
+                  (locksProfit ? " - current stop locks profit" : " - never-widen protection is ON"));
+         wantSL = false;
+         m_ops[i].targetSL = EVE_KEEP;
         }
      }
    if(!haveSym)
      {
-      LogWarning("SL", "No market data for " + symbol + " - SL modification of " + tk + " postponed");
+      LogWarning("STOPS", "No market data for " + symbol + " - modification of " + tk + " postponed");
       m_ops[i].done = true;
       return;
      }
-   if(!CEvePriceRiskCalculator::IsLegalSL(ptype, target, s, 0))
+   if(wantSL && !slOk && !CEvePriceRiskCalculator::IsLegalSL(ptype, tSL, s, 0))
      {
-      LogWarning("SL", "Planned SL " + DoubleToString(target, digits) + " for " + tk +
-                 " is no longer legal (bid " + DoubleToString(s.bid, digits) + " ask " + DoubleToString(s.ask, digits) +
-                 ") - will re-plan");
+      LogWarning("STOPS", "Planned SL " + DoubleToString(tSL, digits) + " for " + tk + " is no longer legal (bid " +
+                 DoubleToString(s.bid, digits) + " ask " + DoubleToString(s.ask, digits) + ") - will re-plan");
+      wantSL = false;
+      m_ops[i].targetSL = EVE_KEEP;
+     }
+   if(wantTP && !tpOk && !CEvePriceRiskCalculator::IsLegalTP(ptype, tTP, s, 0))
+     {
+      LogWarning("STOPS", "Planned TP " + DoubleToString(tTP, digits) + " for " + tk + " is no longer legal (bid " +
+                 DoubleToString(s.bid, digits) + " ask " + DoubleToString(s.ask, digits) + ") - will re-plan");
+      wantTP = false;
+      m_ops[i].targetTP = EVE_KEEP;
+     }
+   bool needSL = (wantSL && !slOk);
+   bool needTP = (wantTP && !tpOk);
+   if(!needSL && !needTP)
+     {
       m_ops[i].done = true;
       return;
      }
@@ -800,41 +978,54 @@ void CEveTradeExecutor::ProcessModify(const int i)
    req.action   = TRADE_ACTION_SLTP;
    req.position = ticket;
    req.symbol   = symbol;
-   req.sl       = NormalizeDouble(target, digits);
-   req.tp       = curTP;   // keep the existing take profit (audit B-05)
+   req.sl       = needSL ? NormalizeDouble(tSL, digits) : curSL;   // unchanged values are re-sent as they are
+   req.tp       = needTP ? NormalizeDouble(tTP, digits) : curTP;   // (an SL change never removes the TP, audit B-05)
    req.magic    = EVE_RP_MAGIC;
 
    ResetLastError();
-   bool sent = OrderSend(req, res);
+   bool sent = Send(req, res, i);
    int err = GetLastError();
    m_ops[i].sendCount++;
    m_ops[i].lastRetcode = res.retcode;
    int cls = ClassifySendResult(res.retcode);
-   if(sent && res.retcode == 0)
-      cls = EVE_RCC_RETRY;
+   if(sent && m_ops[i].sentAsync)
+      cls = EVE_RCC_SUCCESS;
+   else
+      if(sent && res.retcode == 0)
+         cls = EVE_RCC_RETRY;
 
-   string info = tk + " " + symbol + " " + EvePositionTypeName(ptype) + " SL " + DoubleToString(curSL, digits) +
-                 " -> " + DoubleToString(req.sl, digits) + " (TP kept " + DoubleToString(curTP, digits) + ") -> " +
-                 RetcodeText(res.retcode) + ((res.retcode == 0) ? " err " + IntegerToString(err) : "");
+   string info = tk + " " + symbol + " " + EvePositionTypeName(ptype) +
+                 " SL " + DoubleToString(curSL, digits) + " -> " + DoubleToString(req.sl, digits) +
+                 " TP " + DoubleToString(curTP, digits) + " -> " + DoubleToString(req.tp, digits) + " -> " +
+                 (m_ops[i].sentAsync ? "SENT_ASYNC" : RetcodeText(res.retcode)) +
+                 ((res.retcode == 0 && !sent) ? " err " + IntegerToString(err) : "") +
+                 " [" + EvePurposeName(m_ops[i].purpose) + "]";
 
    if(cls == EVE_RCC_SUCCESS)
      {
-      LogInfo("SL", "SL modification accepted " + info);
+      LogInfo("STOPS", "Stops modification " + (m_ops[i].sentAsync ? "sent " : "accepted ") + info);
       m_ops[i].awaitingVerify = true;
       m_ops[i].verifyDeadlineMs = now + (ulong)m_verificationTimeoutMs;
       return;
      }
    if(cls == EVE_RCC_NO_CHANGE)
      {
-      if(PositionSelectByTicket(ticket) && MathAbs(PositionGetDouble(POSITION_SL) - target) < ts * 0.5)
+      bool okNow = false;
+      if(PositionSelectByTicket(ticket))
+        {
+         double sl2 = PositionGetDouble(POSITION_SL);
+         double tp2 = PositionGetDouble(POSITION_TP);
+         okNow = ((!needSL || MathAbs(sl2 - tSL) < ts * 0.5) && (!needTP || MathAbs(tp2 - tTP) < ts * 0.5));
+        }
+      if(okNow)
         {
          ResetModifyCounter(ticket);
-         LogInfo("SL", "SL already at target " + info);
+         LogInfo("STOPS", "Stops already at target " + info);
         }
       else
         {
-         RegisterModifyFailure(ticket, res.retcode);
-         LogWarning("SL", "SL modify reported NO_CHANGES but SL differs " + info);
+         RegisterModifyFailure(ticket, res.retcode, m_ops[i].slFromEngine);
+         LogWarning("STOPS", "NO_CHANGES reported but stops differ " + info);
         }
       m_ops[i].done = true;
       return;
@@ -847,13 +1038,14 @@ void CEveTradeExecutor::ProcessModify(const int i)
    if(cls == EVE_RCC_RETRY_SLOW)
      {
       BlockModify(ticket, res.retcode);
-      LogWarning("SL", "SL modification BLOCKED " + info + " - retry in " + IntegerToString(EVE_SLOW_RETRY_MS / 1000) +
+      LogWarning("STOPS", "Stops modification BLOCKED " + info + " - retry in " + IntegerToString(EVE_SLOW_RETRY_MS / 1000) +
                  " s (not counted as failure)");
       m_ops[i].done = true;
       return;
      }
-   RegisterModifyFailure(ticket, res.retcode);
-   LogWarning("SL", "SL modification FAILED " + info + " (consecutive failures " + IntegerToString(ModifyFailures(ticket)) + ")");
+   RegisterModifyFailure(ticket, res.retcode, m_ops[i].slFromEngine);
+   LogWarning("STOPS", "Stops modification FAILED " + info + " (consecutive SL-engine failures " +
+              IntegerToString(ModifyFailures(ticket)) + ")");
    m_ops[i].done = true;
   }
 
@@ -893,19 +1085,22 @@ void CEveTradeExecutor::ProcessDelete(const int i)
    req.magic  = EVE_RP_MAGIC;
 
    ResetLastError();
-   bool sent = OrderSend(req, res);
+   bool sent = Send(req, res, i);
    int err = GetLastError();
    m_ops[i].sendCount++;
    m_ops[i].lastRetcode = res.retcode;
    int cls = ClassifySendResult(res.retcode);
-   if(sent && res.retcode == 0)
-      cls = EVE_RCC_RETRY;
-   string info = tk + " " + m_ops[i].symbol + " -> " + RetcodeText(res.retcode) +
-                 ((res.retcode == 0) ? " err " + IntegerToString(err) : "");
+   if(sent && m_ops[i].sentAsync)
+      cls = EVE_RCC_SUCCESS;
+   else
+      if(sent && res.retcode == 0)
+         cls = EVE_RCC_RETRY;
+   string info = tk + " " + m_ops[i].symbol + " -> " + (m_ops[i].sentAsync ? "SENT_ASYNC" : RetcodeText(res.retcode)) +
+                 ((res.retcode == 0 && !sent) ? " err " + IntegerToString(err) : "");
 
    if(cls == EVE_RCC_SUCCESS)
      {
-      LogInfo("PENDING", "Pending order deletion accepted " + info);
+      LogInfo("PENDING", "Pending order deletion " + (m_ops[i].sentAsync ? "sent " : "accepted ") + info);
       m_ops[i].awaitingVerify = true;
       m_ops[i].verifyDeadlineMs = now + (ulong)m_verificationTimeoutMs;
       if(!OrderSelect(ticket))

@@ -1,4 +1,4 @@
-# Audit Akhir (§41) — EVE IDR Risk Protector v1.00
+# Audit Akhir (§41) — EVE IDR Risk Protector v1.00 (+ addendum v1.10)
 
 Audit dilakukan dari atas ke bawah terhadap seluruh kode di `MQL5/`.
 
@@ -52,3 +52,26 @@ Status:
 | R7 | Lonjakan spread (rollover) bisa memicu close-all | Sesuai spek (trigger langsung). Filter tidak ditambahkan agar close darurat tidak tertunda. |
 | R8 | `OrderSend` sinkron: close-all N posisi butuh N × latensi dalam satu siklus | Semua close dikirim di siklus yang sama tanpa jeda tambahan. |
 | R9 | EA lain yang memodifikasi SL bisa "berebut" dengan engine | Backoff per tiket; fail-safe setelah `SLModifyFailuresBeforeFailSafe` penolakan. |
+
+
+---
+
+## Addendum v1.10
+
+| Item | Status | Bukti / catatan |
+|---|---|---|
+| SL melebar karena trailing/rebalance | OK | Trailing hanya memindah SL jika lebih protektif dan naik ≥ langkah (`TrailShouldMove`). Never-widen dipaksa ON saat trailing aktif. Executor tetap menolak pelebaran; harness INV5; T29/T30. |
+| TP menghapus/merusak SL | OK | Satu `TRADE_ACTION_SLTP`: bagian yang tidak diminta dikirim ulang apa adanya. Penggabungan SL memilih yang paling protektif. |
+| Duplikat perintah dengan async | OK | Satu op per tiket+jenis. Tidak kirim ulang selama menunggu verifikasi. Balasan broker dipetakan lewat `request_id`; state tetap diverifikasi dari posisi live. |
+| Kegagalan TP/trailing memicu fail-safe SL | OK | Penghitung *soft* terpisah dan tidak dihitung ke fail-safe. Backoff *soft* tidak menunda engine SL. |
+| Bahasa input | OK | Bahasa Inggris sederhana, satuan (IDR) tetap tertulis (§36). |
+| Panel bertumpuk di layar ber-DPI tinggi | OK | Tata letak dari teks terukur, jarak × DPI/96, nilai rata kanan, panel melebar/memotong `...`. |
+
+### Risiko tambahan v1.10
+
+| ID | Risiko | Mitigasi |
+|---|---|---|
+| R10 | v1.10 belum di-compile; API CCanvas dan `OrderSendAsync` baru dipakai | User compile + unit test. Opsi `Send orders in parallel = OFF` kembali ke jalur sinkron v1.00. |
+| R11 | TP/trailing ikut mengatur posisi EA lain; TP manual disamakan | Didokumentasikan. Matikan fitur jika EA lain mengatur TP sendiri. |
+| R12 | TP keranjang ditutup client-side bila profit ≥ target tapi TP tidak bisa dipasang | Disengaja. Tercatat di log `BASKET TP REACHED`. |
+| R13 | Trailing berbasis harga bersama: entry baru di keranjang ikut mendapat SL trailing keranjang | Sesuai semantik keranjang (Q1). Didokumentasikan di PANDUAN §7. |

@@ -128,6 +128,11 @@ public:
    bool              GroupLossAt(const SEvePosition &grp[], const double price, const bool preserve, double &loss);
    bool              SolveGroupSL(const SEvePosition &grp[], const SEveSymbolSnapshot &s, const double budget,
                                   const int bufferTicks, const bool preserve, SEveSolveResult &res);
+   bool              ProfitAt(const ENUM_POSITION_TYPE type, const string symbol, const double volume,
+                              const double priceOpen, const double price, double &profit);
+   bool              GroupProfitAt(const SEvePosition &grp[], const double price, double &profit);
+   bool              SolvePriceForProfit(const SEvePosition &grp[], const SEveSymbolSnapshot &s,
+                                         const double target, double &price);
 
    static bool       IsMoreProtective(const ENUM_POSITION_TYPE type, const double candidateSL, const double referenceSL);
    static bool       StopLocksProfit(const ENUM_POSITION_TYPE type, const double sl, const double priceOpen);
@@ -138,6 +143,8 @@ public:
    static double     MinStopDistance(const SEveSymbolSnapshot &s, const int bufferTicks);
    static bool       IsLegalSL(const ENUM_POSITION_TYPE type, const double sl, const SEveSymbolSnapshot &s, const int bufferTicks);
    static double     PriceFromIndex(const long k, const SEveSymbolSnapshot &s);
+   static double     ClosestLegalSL(const ENUM_POSITION_TYPE type, const SEveSymbolSnapshot &s, const int bufferTicks);
+   static bool       IsLegalTP(const ENUM_POSITION_TYPE type, const double tp, const SEveSymbolSnapshot &s, const int bufferTicks);
   };
 
 //+------------------------------------------------------------------+
@@ -250,6 +257,218 @@ bool CEvePriceRiskCalculator::IsLegalSL(const ENUM_POSITION_TYPE type, const dou
 double CEvePriceRiskCalculator::PriceFromIndex(const long k, const SEveSymbolSnapshot &s)
   {
    return NormalizeDouble((double)k * s.tickSize, s.digits);
+  }
+
+//+------------------------------------------------------------------+
+//| Closest broker-valid SL price (0 if none exists).                |
+//+------------------------------------------------------------------+
+double CEvePriceRiskCalculator::ClosestLegalSL(const ENUM_POSITION_TYPE type, const SEveSymbolSnapshot &s, const int bufferTicks)
+  {
+   if(!s.valid || s.tickSize <= 0.0)
+      return 0.0;
+   double ts = s.tickSize;
+   double d = MinStopDistance(s, bufferTicks);
+   if(type == POSITION_TYPE_BUY)
+     {
+      double maxLegal = s.bid - d;
+      long k = (long)MathFloor(maxLegal / ts + 1e-9);
+      while(k > 0 && (double)k * ts > maxLegal + ts * 1e-6)
+         k--;
+      return (k >= 1) ? PriceFromIndex(k, s) : 0.0;
+     }
+   double minLegal = s.ask + d;
+   long k2 = (long)MathCeil(minLegal / ts - 1e-9);
+   while((double)k2 * ts < minLegal - ts * 1e-6)
+      k2++;
+   if(k2 < 1)
+      k2 = 1;
+   return PriceFromIndex(k2, s);
+  }
+
+//+------------------------------------------------------------------+
+//| BUY TP must be above Bid, SELL TP below Ask, by the broker stop / |
+//| freeze distance.                                                  |
+//+------------------------------------------------------------------+
+bool CEvePriceRiskCalculator::IsLegalTP(const ENUM_POSITION_TYPE type, const double tp,
+                                        const SEveSymbolSnapshot &s, const int bufferTicks)
+  {
+   if(tp <= 0.0 || !s.valid)
+      return false;
+   double d = MinStopDistance(s, bufferTicks);
+   double tol = s.tickSize * 0.001;
+   if(type == POSITION_TYPE_BUY)
+      return (tp >= s.bid + d - tol);
+   return (tp <= s.ask - d + tol);
+  }
+
+//+------------------------------------------------------------------+
+//| Signed profit of one position closed at price (no clamping).     |
+//+------------------------------------------------------------------+
+bool CEvePriceRiskCalculator::ProfitAt(const ENUM_POSITION_TYPE type, const string symbol, const double volume,
+                                       const double priceOpen, const double price, double &profit)
+  {
+   profit = 0.0;
+   return m_model.Profit(type, symbol, volume, priceOpen, price, profit);
+  }
+
+//+------------------------------------------------------------------+
+//| Signed profit of the whole group if it is closed at one price     |
+//| (used by trailing stop and take profit; no clamping because all   |
+//| positions close together at that common price).                  |
+//+------------------------------------------------------------------+
+bool CEvePriceRiskCalculator::GroupProfitAt(const SEvePosition &grp[], const double price, double &profit)
+  {
+   profit = 0.0;
+   int n = ArraySize(grp);
+   for(int i = 0; i < n; i++)
+     {
+      double pi = 0.0;
+      if(!m_model.Profit(grp[i].type, grp[i].symbol, grp[i].volume, grp[i].priceOpen, price, pi))
+         return false;
+      profit += pi;
+     }
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| Price (multiple of tick size) at which the group profit reaches  |
+//| the target, on the side closest to the market:                   |
+//|   BUY : smallest price with profit >= target (profit rises)      |
+//|   SELL: largest  price with profit >= target (profit falls)      |
+//| Used for the basket TP (target above current profit) and for the |
+//| trailing lock (target below current profit).                     |
+//+------------------------------------------------------------------+
+bool CEvePriceRiskCalculator::SolvePriceForProfit(const SEvePosition &grp[], const SEveSymbolSnapshot &s,
+                                                  const double target, double &price)
+  {
+   price = 0.0;
+   int n = ArraySize(grp);
+   if(n <= 0 || !s.valid || s.tickSize <= 0.0)
+      return false;
+   ENUM_POSITION_TYPE type = grp[0].type;
+   double ts = s.tickSize;
+   double ref = (type == POSITION_TYPE_BUY) ? s.bid : s.ask;
+   long kRef = (long)MathRound(ref / ts);
+   if(kRef < 1)
+      kRef = 1;
+   double maxPrice = MathMax(ref, 1.0) * 10000.0;
+   double f = 0.0;
+   if(!GroupProfitAt(grp, PriceFromIndex(kRef, s), f))
+      return false;
+   long a = 1;
+   long b = kRef;
+
+   if(type == POSITION_TYPE_BUY)
+     {
+      if(f >= target - EVE_EPS)
+        {
+         double f1 = 0.0;
+         if(!GroupProfitAt(grp, PriceFromIndex(1, s), f1))
+            return false;
+         if(f1 >= target - EVE_EPS)
+           {
+            price = PriceFromIndex(1, s);
+            return true;
+           }
+         a = 1;
+         b = kRef;
+        }
+      else
+        {
+         a = kRef;
+         b = kRef;
+         long step = kRef;
+         bool found = false;
+         for(int it = 0; it < 64; it++)
+           {
+            long cand = b + step;
+            if((double)cand * ts > maxPrice)
+               break;
+            if(!GroupProfitAt(grp, PriceFromIndex(cand, s), f))
+               return false;
+            if(f >= target - EVE_EPS)
+              {
+               b = cand;
+               found = true;
+               break;
+              }
+            a = cand;
+            b = cand;
+            if(step < 1000000000000)
+               step *= 2;
+           }
+         if(!found)
+            return false;
+        }
+      //--- invariant: profit(a) < target <= profit(b)
+      while(b - a > 1)
+        {
+         long mid = a + (b - a) / 2;
+         if(!GroupProfitAt(grp, PriceFromIndex(mid, s), f))
+            return false;
+         if(f >= target - EVE_EPS)
+            b = mid;
+         else
+            a = mid;
+        }
+      price = PriceFromIndex(b, s);
+      return true;
+     }
+
+   //--- SELL
+   if(f >= target - EVE_EPS)
+     {
+      a = kRef;
+      b = kRef;
+      long step2 = kRef;
+      bool found2 = false;
+      for(int it2 = 0; it2 < 64; it2++)
+        {
+         long cand2 = b + step2;
+         if((double)cand2 * ts > maxPrice)
+            break;
+         if(!GroupProfitAt(grp, PriceFromIndex(cand2, s), f))
+            return false;
+         if(f < target - EVE_EPS)
+           {
+            b = cand2;
+            found2 = true;
+            break;
+           }
+         a = cand2;
+         b = cand2;
+         if(step2 < 1000000000000)
+            step2 *= 2;
+        }
+      if(!found2)
+        {
+         price = PriceFromIndex(a, s);
+         return true;
+        }
+     }
+   else
+     {
+      double f1s = 0.0;
+      if(!GroupProfitAt(grp, PriceFromIndex(1, s), f1s))
+         return false;
+      if(f1s < target - EVE_EPS)
+         return false;   // target cannot be reached at any price
+      a = 1;
+      b = kRef;
+     }
+   //--- invariant: profit(a) >= target > profit(b)
+   while(b - a > 1)
+     {
+      long mid2 = a + (b - a) / 2;
+      if(!GroupProfitAt(grp, PriceFromIndex(mid2, s), f))
+         return false;
+      if(f >= target - EVE_EPS)
+         a = mid2;
+      else
+         b = mid2;
+     }
+   price = PriceFromIndex(a, s);
+   return true;
   }
 
 //+------------------------------------------------------------------+

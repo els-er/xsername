@@ -442,7 +442,7 @@ void TestConfig()
    CEveConfigurationValidator::Validate(cfgIn, cfgOut, f, errors, warnings);
    bool warned = false;
    for(int i = 0; i < ArraySize(warnings); i++)
-      if(StringFind(warnings[i], "ALL AUTOMATIC RISK PROTECTION IS DISABLED") >= 0)
+      if(StringFind(warnings[i], "ALL AUTOMATIC PROTECTION IS OFF") >= 0)
          warned = true;
    Check(!f.anyActive && warned, "Spec 19: all protection disabled -> warning", "");
 
@@ -460,6 +460,114 @@ void TestConfig()
   }
 
 //+------------------------------------------------------------------+
+//| T26-T30: basket take profit and trailing stop (v1.10)            |
+//+------------------------------------------------------------------+
+void TestTrailTP()
+  {
+   CTestLinearModel model;
+   CEvePriceRiskCalculator calc;
+   calc.SetModel(GetPointer(model));
+   SEveSymbolSnapshot s;
+   MakeSym(s, 2000.00, 2000.20, 0);
+   double price = 0.0;
+   double profit = 0.0;
+   bool ok = false;
+
+   //--- T26 basket TP: smallest BUY price / largest SELL price with profit >= target
+   SEvePosition b1[];
+   ArrayResize(b1, 1);
+   SetPos(b1, 0, 20, POSITION_TYPE_BUY, 0.10, 2000.00, 0.0);
+   ok = calc.SolvePriceForProfit(b1, s, 300000.0, price);
+   calc.GroupProfitAt(b1, price, profit);
+   Check(ok && Near(price, 2001.88, 0.000001) && profit >= 300000.0, "T26 BUY basket TP price (profit >= target)",
+         "TP " + DoubleToString(price, 2) + " profit " + EveFormatIDR(profit));
+   calc.GroupProfitAt(b1, 2001.87, profit);
+   Check(profit < 300000.0, "T26 BUY TP is the first tick that reaches the target", EveFormatIDR(profit));
+   Check(CEvePriceRiskCalculator::IsLegalTP(POSITION_TYPE_BUY, 2001.88, s, 1), "T26 BUY TP above Bid is legal", "");
+   Check(!CEvePriceRiskCalculator::IsLegalTP(POSITION_TYPE_BUY, 1999.00, s, 0), "T26 BUY TP below Bid is illegal", "");
+
+   SEvePosition s1[];
+   ArrayResize(s1, 1);
+   SetPos(s1, 0, 21, POSITION_TYPE_SELL, 0.10, 2000.00, 0.0);
+   ok = calc.SolvePriceForProfit(s1, s, 300000.0, price);
+   calc.GroupProfitAt(s1, price, profit);
+   Check(ok && Near(price, 1998.12, 0.000001) && profit >= 300000.0, "T26 SELL basket TP price",
+         "TP " + DoubleToString(price, 2) + " profit " + EveFormatIDR(profit));
+   Check(CEvePriceRiskCalculator::IsLegalTP(POSITION_TYPE_SELL, 1998.12, s, 1), "T26 SELL TP below Ask is legal", "");
+
+   //--- T27 user basket (0.02 + 0.05): one common TP for both entries
+   SEvePosition u[];
+   ArrayResize(u, 2);
+   SetPos(u, 0, 22, POSITION_TYPE_BUY, 0.02, 2006.25, 0.0);
+   SetPos(u, 1, 23, POSITION_TYPE_BUY, 0.05, 2000.20, 0.0);
+   ok = calc.SolvePriceForProfit(u, s, 300000.0, price);
+   calc.GroupProfitAt(u, price, profit);
+   Check(ok && Near(price, 2004.61, 0.000001) && Near(profit, 300320.0, 0.01), "T27 basket TP for 0.02 + 0.05 entries",
+         "TP " + DoubleToString(price, 2) + " basket profit " + EveFormatIDR(profit));
+
+   //--- T28 TP refresh rule (1% tolerance)
+   Check(CEveTrailTPManager::TPNeedsUpdate(0.0, 0.0, 300000.0, 3000.0), "T28 missing TP is set", "");
+   Check(!CEveTrailTPManager::TPNeedsUpdate(2001.88, 300800.0, 300000.0, 3000.0), "T28 TP within tolerance is kept (no churn)", "");
+   Check(CEveTrailTPManager::TPNeedsUpdate(2001.50, 240000.0, 300000.0, 3000.0), "T28 TP far from target is updated", "");
+
+   //--- T29 trailing BUY: profit 320k, distance 50k -> lock 270k at 2001.69
+   SEveSymbolSnapshot st;
+   MakeSym(st, 2002.00, 2002.20, 0);
+   double basket = 0.0;
+   calc.GroupProfitAt(b1, st.bid, basket);
+   ok = calc.SolvePriceForProfit(b1, st, basket - 50000.0, price);
+   calc.GroupProfitAt(b1, price, profit);
+   Check(ok && Near(basket, 320000.0, 0.01) && Near(price, 2001.69, 0.000001) && Near(profit, 270400.0, 0.01),
+         "T29 BUY trailing SL locks profit - distance", "SL " + DoubleToString(price, 2) + " locked " + EveFormatIDR(profit));
+   Check(CEveTrailTPManager::TrailShouldMove(POSITION_TYPE_BUY, 0.0, 2001.69, 270400.0, 0.0, 10000.0),
+         "T29 no SL yet -> set trailing SL", "");
+   Check(CEveTrailTPManager::TrailShouldMove(POSITION_TYPE_BUY, 2001.50, 2001.69, 270400.0, 240000.0, 10000.0),
+         "T29 locked profit +30.400 >= step -> move", "");
+   Check(!CEveTrailTPManager::TrailShouldMove(POSITION_TYPE_BUY, 2001.65, 2001.69, 270400.0, 264000.0, 10000.0),
+         "T29 locked profit +6.400 < step -> no move (no churn)", "");
+   Check(!CEveTrailTPManager::TrailShouldMove(POSITION_TYPE_BUY, 2001.80, 2001.69, 270400.0, 288000.0, 10000.0),
+         "T29 never moves an SL away from the market", "");
+   Check(Near(CEvePriceRiskCalculator::ClosestLegalSL(POSITION_TYPE_BUY, st, 1), 2001.99, 0.000001),
+         "T29 closest legal BUY SL (clamp target when distance is tiny)", "");
+
+   //--- T30 trailing SELL mirror: ask 1998.00 -> lock 270k at 1998.31
+   SEveSymbolSnapshot ss;
+   MakeSym(ss, 1997.80, 1998.00, 0);
+   calc.GroupProfitAt(s1, ss.ask, basket);
+   ok = calc.SolvePriceForProfit(s1, ss, basket - 50000.0, price);
+   calc.GroupProfitAt(s1, price, profit);
+   Check(ok && Near(price, 1998.31, 0.000001) && Near(profit, 270400.0, 0.01), "T30 SELL trailing SL",
+         "SL " + DoubleToString(price, 2) + " locked " + EveFormatIDR(profit));
+   Check(Near(CEvePriceRiskCalculator::ClosestLegalSL(POSITION_TYPE_SELL, ss, 1), 1998.01, 0.000001),
+         "T30 closest legal SELL SL", "");
+   Check(!CEveTrailTPManager::TrailShouldMove(POSITION_TYPE_SELL, 1998.20, 1998.31, 270400.0, 288000.0, 10000.0),
+         "T30 SELL never moves an SL away from the market", "");
+
+   //--- config validation for the new inputs
+   SEveConfig cin;
+   SEveConfig cout;
+   SEveFeatureFlags ff;
+   string errs[];
+   string warns[];
+   EveConfigSetDefaults(cin);
+   cin.trailingEnabled = true;
+   cin.trailingDistanceIDR = 0;
+   CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
+   Check(!ff.trailActive && ff.lossActive && ff.slActive && ArraySize(errs) > 0,
+         "Config: invalid trailing turns ONLY trailing off", IntegerToString(ArraySize(errs)) + " error(s)");
+   EveConfigSetDefaults(cin);
+   cin.tpEnabled = true;
+   cin.tpBasketIDR = 0;
+   CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
+   Check(!ff.tpActive && ff.lossActive, "Config: invalid basket TP turns ONLY TP off", "");
+   EveConfigSetDefaults(cin);
+   cin.trailingEnabled = true;
+   cin.preserveMoreProtectiveSL = false;
+   CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
+   Check(ff.trailActive && cout.preserveMoreProtectiveSL, "Config: trailing forces 'never move an SL further away'", "");
+  }
+
+//+------------------------------------------------------------------+
 void OnStart()
   {
    ArrayResize(g_lines, 0);
@@ -470,6 +578,7 @@ void OnStart()
    TestSolver();
    TestRetcodes();
    TestConfig();
+   TestTrailTP();
    string summary = "=== RESULT: " + IntegerToString(g_pass) + " passed, " + IntegerToString(g_fail) + " failed ===";
    AddLine(summary);
 
