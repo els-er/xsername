@@ -191,7 +191,7 @@ int CEveRiskProtectorApp::Init(const SEveConfig &cfg)
                     "' accepted for testing only (amounts are in deposit currency units)");
       currencyOK = true;
      }
-   m_dash.Init(cfg.showDashboard, (int)cfg.dashboardCorner, cfg.dashboardX, cfg.dashboardY);
+   m_dash.Init(cfg.showDashboard, (int)cfg.dashboardCorner, cfg.dashboardX, cfg.dashboardY, cfg.dashboardSizePct);
    if(!currencyOK)
      {
       m_safeDisabledReason = "account currency is '" + m_env.currency + "', not IDR - all protection is off";
@@ -245,7 +245,7 @@ int CEveRiskProtectorApp::Init(const SEveConfig &cfg)
    m_trail.Init(GetPointer(m_log), GetPointer(m_exec), GetPointer(m_notify), m_cfg);
    m_persist.Init(login, server);
    m_guard.Init(m_persist.Prefix(), !m_isTester);
-   m_dash.Init(m_cfg.showDashboard, (int)m_cfg.dashboardCorner, m_cfg.dashboardX, m_cfg.dashboardY);
+   m_dash.Init(m_cfg.showDashboard, (int)m_cfg.dashboardCorner, m_cfg.dashboardX, m_cfg.dashboardY, m_cfg.dashboardSizePct);
    StartTimer(m_cfg.reconciliationIntervalMs);
 
    //--- single instance per account (audit G-09)

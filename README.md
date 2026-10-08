@@ -1,4 +1,4 @@
-# EVE IDR Risk Protector (MT5) — v1.11
+# EVE IDR Risk Protector (MT5) — v1.12
 
 EA **pengendali risiko** untuk MetaTrader 5 (akun Exness Pro dengan mata uang **IDR**).
 
@@ -25,7 +25,8 @@ Peningkatan lain di v1.10:
 - **Panel baru:**
   - digambar ulang dan menyesuaikan skala layar (DPI), angka rata kanan sehingga tidak bertumpuk;
   - bar progres, badge status, tombol minimize;
-  - posisi pojok bisa dipilih.
+  - posisi pojok bisa dipilih;
+  - v1.12: tata letak ringkas (sekitar separuh tinggi v1.11) dan ukuran bisa diatur lewat `Panel size (%)`.
 - **Perintah dikirim paralel** (async). Close-all dan perubahan SL/TP untuk banyak posisi berangkat bersamaan.
 - **SL/TP posisi baru dipasang langsung** saat posisi muncul, tidak menunggu siklus timer.
 
@@ -115,6 +116,7 @@ Label di bawah persis seperti yang tampil di tab Inputs MT5. Semua nominal dalam
 |---|---|---|
 | Show panel | ON | Panel di chart (tombol reset tetap muncul saat terkunci walau panel OFF). |
 | Panel position | Top left | Top left / Top right / Bottom left / Bottom right. |
+| Panel size (%) - 100 = normal | 100 | 50–200. Angka lebih kecil = panel dan tulisan lebih kecil. |
 | Panel distance from side / top-bottom (px) | 10 / 30 | Jarak panel dari tepi chart. |
 | Alerts to phone (set MetaQuotes ID in MT5) | ON | Push notification MT5. |
 | Popup alerts for important events | ON | Popup alert. |
@@ -152,4 +154,4 @@ Label di bawah persis seperti yang tampil di tab Inputs MT5. Semua nominal dalam
 
 ## Versi
 
-v1.11 (perbaikan compile v1.10) — lihat [`CHANGELOG.md`](CHANGELOG.md).
+v1.12 — lihat [`CHANGELOG.md`](CHANGELOG.md).

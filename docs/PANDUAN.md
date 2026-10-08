@@ -1,4 +1,4 @@
-# Panduan Kerja — EVE IDR Risk Protector v1.11
+# Panduan Kerja — EVE IDR Risk Protector v1.12
 
 Panduan ini berisi langkah compile, uji, pemasangan, dan pemakaian EA, serta cara mengirim hasil atau error ke saya (Claude) agar bisa diperbaiki.
 
@@ -37,7 +37,7 @@ Mata uang akun harus **IDR**. Kalau bukan, EA masuk status `DISABLED` dan tidak 
    ```
 
    v1.10 menambah file baru `Include/EVE_Risk/TrailTPManager.mqh`. Pastikan file itu ikut tersalin.
-   v1.11 mengubah `Include/EVE_Risk/RiskDashboard.mqh`, `Defines.mqh`, dan kedua file di `Experts`. Paling aman: salin ulang semua file.
+   Setiap versi bisa mengubah beberapa file sekaligus (v1.12: panel, config, EA, unit test). Paling aman: salin ulang semua file.
 3. Klik kanan **Navigator → Refresh**.
 
 > Saat update dari v1.00: nama input berubah (label sekarang bahasa Inggris sederhana). File `.set` lama tidak terbaca otomatis, jadi isi ulang nilai Anda sekali, lalu **Save** sebagai `.set` baru.
@@ -91,7 +91,7 @@ Label persis seperti di MT5. Semua nominal dalam **Rupiah (IDR)**.
 | **4. TRAILING STOP** | Nyalakan, isi kapan mulai, jarak, dan langkah (lihat bagian 7). |
 | **5. TAKE PROFIT** | Nyalakan, isi `Close the basket at this profit (IDR)` (lihat bagian 8). |
 | **6. WHEN THE EA IS LOCKED** | Hanya berlaku jika lock dinyalakan di grup 1/2. |
-| **7. PANEL AND ALERTS** | Posisi panel dan notifikasi. |
+| **7. PANEL AND ALERTS** | Posisi dan ukuran panel (`Panel size (%)`), notifikasi. |
 | **8. ADVANCED** | Biarkan default jika ragu. |
 
 Istilah **keranjang (basket)** = semua posisi dengan **simbol dan arah yang sama**, mis. semua BUY XAUUSD.
@@ -134,29 +134,29 @@ Bedanya dengan **Profit target** (grup 2): profit target melihat total **semua p
 ## 9. Membaca panel
 
 ```text
-EVE RISK PROTECTOR v1.11              [ARMED] [-]
-ACCOUNT ──────────────────────────────────────────
-Currency                                     IDR
-Balance                              Rp1.600.582
-Equity                               Rp1.600.582
-Floating                                     Rp0   (besar, hijau/merah)
-Positions                     0 open | 0 pending
-PROTECTION ───────────────────────────────────────
-Max total loss                  Rp0 / Rp500.000
-▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░   (bar pemakaian)
-Profit target                   Rp0 / Rp300.000
-Auto SL (loss if hit)           Rp0 / Rp800.000
-SL status                           NO POSITIONS
-Trailing stop                                OFF
-Basket TP                                    OFF
-SYSTEM ───────────────────────────────────────────
-Auto Trading                        OK (HEDGING)
-Lock after close           Loss OFF | Profit OFF
-Last event          15:30:23 All closed - armed
+EVE RISK PROTECTOR v1.12     [ARMED] [-]
+ACCOUNT (IDR) ──────────────────────────
+Balance                      Rp1.600.582
+Equity                       Rp1.600.582
+Floating                             Rp0   (besar, hijau/merah)
+Positions             0 open | 0 pending
+PROTECTION ─────────────────────────────
+Max total loss           Rp0 / Rp500.000
+▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░   (bar pemakaian)
+Profit target            Rp0 / Rp300.000
+Auto SL (loss if hit)    Rp0 / Rp800.000
+SL status                   NO POSITIONS
+Trailing stop                        OFF
+Basket TP                            OFF
+SYSTEM ─────────────────────────────────
+Auto Trading                OK (HEDGING)
+Lock after close   Loss OFF | Profit OFF
+Last event     15:30:23 All closed - armed
 ```
 
 - Tombol **[-]** di kanan atas memperkecil panel menjadi judul saja. **[+]** membukanya lagi.
 - Pindahkan panel lewat input `Panel position` (Top left / Top right / Bottom left / Bottom right) dan jaraknya.
+- Ubah ukuran lewat `Panel size (%)`: 100 = normal (ringkas), mis. 80 lebih kecil, 130 lebih besar (rentang 50–200). Huruf dan jarak ikut mengecil/membesar.
 - Panel menyesuaikan skala tampilan Windows (125%, 150%, dst.), dan angka selalu rata kanan sehingga tidak bertumpuk.
 - Badge status: **ARMED** (normal), **CLOSING ALL**, **CLOSE FAILED** (terus dicoba), **LOCKED**, **STANDBY**, **DISABLED**.
 - Kotak berwarna di bawah muncul jika ada hal penting (mis. Algo Trading mati, pengaturan salah).

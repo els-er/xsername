@@ -1,4 +1,4 @@
-# Desain — EVE IDR Risk Protector v1.11
+# Desain — EVE IDR Risk Protector v1.12
 
 Dokumen ini memenuhi §41 spek: arsitektur, pemetaan requirement, struktur modul, state machine, algoritma SL agregat, algoritma loss/profit global, algoritma close/retry/verifikasi, dan matriks uji.
 
@@ -429,7 +429,8 @@ Sifatnya:
 ### 10.7 Panel (CCanvas)
 
 - Satu `OBJ_BITMAP_LABEL` digambar dengan CCanvas.
-- Font dalam persepuluhan poin (diskalakan Windows). Semua jarak × `TERMINAL_SCREEN_DPI / 96`.
-- Lebar dihitung dari teks yang diukur (`TextWidth`): label kiri, angka rata kanan, panel melebar sampai maks ±470 px × skala. Teks yang lebih panjang dipotong dengan `...`, banner dibungkus kata per kata.
+- Font dalam persepuluhan poin (diskalakan Windows) × `Panel size (%)`. Semua jarak × `TERMINAL_SCREEN_DPI / 96` × `Panel size (%)`.
+- v1.12 ringkas: label/angka 6 pt, judul 6,5 pt, Floating 8,5 pt, bagian 5 pt; mata uang di judul bagian `ACCOUNT (IDR)`.
+- Lebar dihitung dari teks yang diukur (`TextWidth`): label kiri, angka rata kanan, panel melebar sampai maks 300 px × skala. Teks yang lebih panjang dipotong dengan `...`, banner dibungkus kata per kata.
 - Badge status, bar progres (rugi, profit, risiko SL), tombol minimize, tombol RESET yang digambar (klik dideteksi dari koordinat `CHARTEVENT_OBJECT_CLICK`).
 - Posisi dihitung dari pojok pilihan dan ukuran chart, diperbarui saat `CHARTEVENT_CHART_CHANGE`.

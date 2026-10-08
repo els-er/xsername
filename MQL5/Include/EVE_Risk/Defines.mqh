@@ -6,7 +6,7 @@
 #define EVE_RISK_DEFINES_MQH
 
 #define EVE_RP_NAME              "EVE IDR RISK PROTECTOR"
-#define EVE_RP_VERSION           "1.11"
+#define EVE_RP_VERSION           "1.12"
 #define EVE_RP_REQUIRED_CURRENCY "IDR"
 #define EVE_RP_MAGIC             770010
 #define EVE_RP_COMMENT           "EVE-RP"
@@ -172,6 +172,7 @@ struct SEveConfig
    bool                        showDashboard;
    int                         dashboardX;
    int                         dashboardY;
+   int                         dashboardSizePct;
    ENUM_EVE_CORNER             dashboardCorner;
    //--- test harness only (ignored outside the Strategy Tester)
    bool                        testAllowAnyCurrency;
@@ -222,6 +223,7 @@ void EveConfigSetDefaults(SEveConfig &c)
    c.showDashboard                  = true;
    c.dashboardX                     = 10;
    c.dashboardY                     = 30;
+   c.dashboardSizePct               = 100;
    c.dashboardCorner                = EVE_CORNER_LEFT_UPPER;
    c.testAllowAnyCurrency           = false;
   }

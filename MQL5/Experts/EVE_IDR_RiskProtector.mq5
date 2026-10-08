@@ -17,8 +17,8 @@
 //| loss/profit differ from the amount you set.                       |
 //+------------------------------------------------------------------+
 #property copyright   "EVE"
-#property version     "1.11"
-#property description "EVE IDR Risk Protector v1.11 - risk-control EA (never opens trades)."
+#property version     "1.12"
+#property description "EVE IDR Risk Protector v1.12 - risk-control EA (never opens trades)."
 #property description "Works on ALL positions in the account (all symbols, manual + other EAs)."
 #property description "Max total loss, profit target, auto stop loss, trailing stop and basket TP - all in IDR."
 #property description "Limits are triggers, not guaranteed fill results."
@@ -61,6 +61,7 @@ input ENUM_EVE_ONOFF              DeletePendingWhenLocked = EVE_ON;             
 input group "7. PANEL AND ALERTS"
 input ENUM_EVE_ONOFF  ShowPanel      = EVE_ON;                  // Show panel
 input ENUM_EVE_CORNER PanelPosition  = EVE_CORNER_LEFT_UPPER;   // Panel position
+input int             PanelSizePct   = 100;                     // Panel size (%) - 100 = normal
 input int             PanelOffsetX   = 10;                      // Panel distance from side (px)
 input int             PanelOffsetY   = 30;                      // Panel distance from top/bottom (px)
 input ENUM_EVE_ONOFF  PhoneAlerts    = EVE_ON;                  // Alerts to phone (set MetaQuotes ID in MT5)
@@ -121,6 +122,7 @@ int OnInit()
    c.dashboardCorner                = PanelPosition;
    c.dashboardX                     = PanelOffsetX;
    c.dashboardY                     = PanelOffsetY;
+   c.dashboardSizePct               = PanelSizePct;
    c.enablePush                     = (PhoneAlerts == EVE_ON);
    c.enableAlerts                   = (PopupAlerts == EVE_ON);
    //--- 8. advanced

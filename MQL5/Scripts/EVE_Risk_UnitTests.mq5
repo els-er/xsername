@@ -565,6 +565,16 @@ void TestTrailTP()
    cin.preserveMoreProtectiveSL = false;
    CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
    Check(ff.trailActive && cout.preserveMoreProtectiveSL, "Config: trailing forces 'never move an SL further away'", "");
+
+   //--- panel size input (v1.12)
+   EveConfigSetDefaults(cin);
+   cin.dashboardSizePct = 70;
+   CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
+   Check(cout.dashboardSizePct == 70 && ArraySize(errs) == 0, "Config: panel size 70% accepted", "");
+   cin.dashboardSizePct = 10;
+   CEveConfigurationValidator::Validate(cin, cout, ff, errs, warns);
+   Check(cout.dashboardSizePct == 100 && ArraySize(errs) > 0 && ff.lossActive,
+         "Config: invalid panel size -> 100%, protection stays on", IntegerToString(ArraySize(errs)) + " error(s)");
   }
 
 //+------------------------------------------------------------------+

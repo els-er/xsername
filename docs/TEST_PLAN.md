@@ -1,4 +1,4 @@
-# Rencana Uji & Bukti — EVE IDR Risk Protector v1.11
+# Rencana Uji & Bukti — EVE IDR Risk Protector v1.12
 
 Ada empat lapisan uji:
 
@@ -45,6 +45,7 @@ Jalankan script `EVE_Risk_UnitTests`. Target: `0 failed`. Hasil: `MQL5\Files\EVE
 | T29 | Trailing BUY: profit 320k, jarak 50k, langkah 10k | SL 2001,69 (kunci Rp270.400); +30.400 → geser; +6.400 → tidak; tidak pernah mundur; SL legal terdekat 2001,99 |
 | T30 | Trailing SELL (cermin) | SL 1998,31; SL legal terdekat 1998,01; tidak pernah mundur |
 | Config v1.10 | Trailing/TP invalid; trailing + never-widen OFF | hanya fitur itu yang mati; never-widen dipaksa ON |
+| Config v1.12 | `Panel size (%)` 70 / 10 | 70 diterima; 10 → error + 100, proteksi tetap ON |
 
 ---
 
@@ -108,7 +109,7 @@ Isi kolom "Hasil" saat menguji.
 | D21 | TP ON (20.000), 2 entry BUY lot berbeda | kedua posisi punya TP yang sama; profit keranjang di TP ≈ 20.000 | |
 | D22 | Tambah entry ketiga saat TP aktif | TP semua posisi dihitung ulang (satu harga) | |
 | D23 | Ubah TP manual saat TP ON | EA menyamakan lagi ke TP keranjang | |
-| D24 | Panel: ganti `Panel position` ke Top right, klik [-] lalu [+] | panel pindah pojok, mengecil/membesar, teks tidak bertumpuk (cek juga skala Windows 125%/150%) | |
+| D24 | Panel: ganti `Panel position` ke Top right, klik [-] lalu [+]; ganti `Panel size (%)` ke 80 lalu 130 | panel pindah pojok, mengecil/membesar, teks tidak bertumpuk (cek juga skala Windows 125%/150%) | |
 | D25 | `Send orders in parallel` ON vs OFF, close-all 5 posisi | keduanya menutup semua; ON terasa lebih cepat; log `SENT_ASYNC` lalu `VERIFIED CLOSED` | |
 
 ---
@@ -123,7 +124,8 @@ Isi kolom "Hasil" saat menguji.
 | Uji pakai v1.00 di MT5 | Dilaporkan user: jalan; masukan → v1.10 (bahasa, trailing/TP, panel). |
 | Cek silang Python v1.10 (TP/trailing) | **Dijalankan oleh Claude**, angka T26–T30 cocok (`tests/solver_mirror_check.out.txt`). |
 | Compile MQL5 v1.10 | **Gagal** — dilaporkan user: 33 error, 25 warning di ketiga program. Satu sebab: fungsi `ARGB` di panel bentrok dengan macro `ARGB` milik `Canvas.mqh`. |
-| Compile MQL5 v1.11 | **Belum** — perbaikan nama sudah dibuat, menunggu compile oleh user. |
-| Unit test MQL5 v1.11 | **Belum** — menunggu user. |
+| Compile MQL5 v1.11 | **Lulus** — EA v1.11 berjalan di MT5 user (screenshot, akun demo IDR, status ARMED). Masukan: panel terlalu besar → v1.12. |
+| Compile MQL5 v1.12 | **Belum** — menunggu compile oleh user. |
+| Unit test MQL5 v1.12 | **Belum** — menunggu user. |
 | Harness tester (B) | **Belum dijalankan.** Menunggu user. |
 | Checklist demo (D) | **Belum dijalankan.** Menunggu user. |

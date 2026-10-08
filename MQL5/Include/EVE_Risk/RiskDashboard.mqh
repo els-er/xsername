@@ -1,6 +1,8 @@
 //+------------------------------------------------------------------+
 //|                                                RiskDashboard.mqh |
 //| Chart panel drawn on one bitmap (CCanvas), plain simple English.  |
+//| - compact layout (v1.12): small fonts, tight rows                 |
+//| - "Panel size (%)" input scales fonts and spacing (50..200 %)     |
 //| - DPI aware: fonts in tenths of a point (scaled by Windows) and   |
 //|   all spacing scaled by TERMINAL_SCREEN_DPI / 96                  |
 //| - layout from MEASURED text: labels left, values right-aligned,  |
@@ -24,7 +26,6 @@
 #define EVE_ROW_BIG         2
 #define EVE_ROW_BAR         3
 #define EVE_ROW_TEXT        4
-#define EVE_ROW_NOTE        5
 
 //--- palette
 #define EVE_C_BG            C'16,20,27'
@@ -103,7 +104,8 @@ private:
    int               m_posY;
    int               m_w;
    int               m_h;
-   double            m_scale;
+   double            m_zoom;    // "Panel size (%)" / 100
+   double            m_scale;   // DPI / 96 x m_zoom
    ulong             m_resetArmedUntil;
    int               m_minX1, m_minY1, m_minX2, m_minY2;
    int               m_rstX1, m_rstY1, m_rstX2, m_rstY2;
@@ -116,12 +118,13 @@ private:
    int               S(const double v) const { return (int)MathRound(v * m_scale); }
    uint              ToArgb(const color c) const { return ColorToARGB(c, 255); }   // not "ARGB": Canvas.mqh defines a macro with that name
    static color      Mix(const color a, const color b, const double t);
-   void              FontLabel(void)   { m_canvas.FontSet(EVE_DB_FONT, -90, FW_NORMAL);   }
-   void              FontValue(void)   { m_canvas.FontSet(EVE_DB_FONT, -90, FW_SEMIBOLD); }
-   void              FontTitle(void)   { m_canvas.FontSet(EVE_DB_FONT, -100, FW_BOLD);    }
-   void              FontSection(void) { m_canvas.FontSet(EVE_DB_FONT, -75, FW_BOLD);     }
-   void              FontBig(void)     { m_canvas.FontSet(EVE_DB_FONT, -140, FW_BOLD);    }
-   void              FontSmall(void)   { m_canvas.FontSet(EVE_DB_FONT, -75, FW_NORMAL);   }
+   void              Font(const int tenthsOfPoint, const uint weight);
+   void              FontLabel(void)   { Font(60, FW_NORMAL);   }
+   void              FontValue(void)   { Font(60, FW_SEMIBOLD); }
+   void              FontTitle(void)   { Font(65, FW_BOLD);     }
+   void              FontSection(void) { Font(50, FW_BOLD);     }
+   void              FontBig(void)     { Font(85, FW_BOLD);     }
+   void              FontSmall(void)   { Font(50, FW_NORMAL);   }
    void              AddRow(const int kind, const string key, const string value,
                             const color keyColor, const color valueColor, const double ratio);
    void              BuildRows(const SEveDashboardData &d);
@@ -134,7 +137,7 @@ private:
 
 public:
                      CEveRiskDashboard(void);
-   void              Init(const bool enabled, const int corner, const int x, const int y);
+   void              Init(const bool enabled, const int corner, const int x, const int y, const int sizePct);
    void              Update(const SEveDashboardData &d);
    void              Destroy(void);
    void              OnChartChange(void) { if(m_created) Place(); }
@@ -153,6 +156,7 @@ CEveRiskDashboard::CEveRiskDashboard(void) : m_enabled(true),
                                              m_posY(0),
                                              m_w(0),
                                              m_h(0),
+                                             m_zoom(1.0),
                                              m_scale(1.0),
                                              m_resetArmedUntil(0),
                                              m_minX1(0), m_minY1(0), m_minX2(0), m_minY2(0),
@@ -165,19 +169,38 @@ CEveRiskDashboard::CEveRiskDashboard(void) : m_enabled(true),
   }
 
 //+------------------------------------------------------------------+
-void CEveRiskDashboard::Init(const bool enabled, const int corner, const int x, const int y)
+void CEveRiskDashboard::Init(const bool enabled, const int corner, const int x, const int y, const int sizePct)
   {
    m_enabled = enabled;
    m_corner = corner;
    m_offX = x;
    m_offY = y;
+   int pct = sizePct;
+   if(pct < 50)
+      pct = 50;
+   if(pct > 200)
+      pct = 200;
+   m_zoom = pct / 100.0;
    double dpi = (double)TerminalInfoInteger(TERMINAL_SCREEN_DPI);
-   m_scale = (dpi > 0.0) ? dpi / 96.0 : 1.0;
-   if(m_scale < 1.0)
-      m_scale = 1.0;
-   if(m_scale > 3.0)
-      m_scale = 3.0;
+   double dpiScale = (dpi > 0.0) ? dpi / 96.0 : 1.0;
+   if(dpiScale < 1.0)
+      dpiScale = 1.0;
+   if(dpiScale > 3.0)
+      dpiScale = 3.0;
+   m_scale = dpiScale * m_zoom;
    ObjectsDeleteAll(0, "EVERP_DB_");   // leftovers of the v1.00 label dashboard
+  }
+
+//+------------------------------------------------------------------+
+//| Negative size = tenths of a point, so Windows applies its own    |
+//| display scaling; the panel size input scales it further.         |
+//+------------------------------------------------------------------+
+void CEveRiskDashboard::Font(const int tenthsOfPoint, const uint weight)
+  {
+   int size = (int)MathRound(tenthsOfPoint * m_zoom);
+   if(size < 30)
+      size = 30;
+   m_canvas.FontSet(EVE_DB_FONT, -size, weight);
   }
 
 //+------------------------------------------------------------------+
@@ -278,16 +301,18 @@ void CEveRiskDashboard::BuildRows(const SEveDashboardData &d)
    double fl = d.floating;
    double flLoss = CEveFloatingMonitor::FloatingLoss(fl);
    double flProfit = CEveFloatingMonitor::FloatingProfit(fl);
+   bool currencyOK = (d.currency == EVE_RP_REQUIRED_CURRENCY);
 
-   //--- account
-   AddRow(EVE_ROW_SECTION, "ACCOUNT", "", EVE_C_SECTION, EVE_C_SECTION, 0.0);
-   AddRow(EVE_ROW_KV, "Currency", d.currency, EVE_C_LABEL,
-          (d.currency == EVE_RP_REQUIRED_CURRENCY) ? EVE_C_VALUE : EVE_C_RED, 0.0);
+   //--- account (the account currency is part of the section title)
+   AddRow(EVE_ROW_SECTION, (d.currency != "") ? "ACCOUNT (" + d.currency + ")" : "ACCOUNT", "",
+          EVE_C_SECTION, EVE_C_SECTION, 0.0);
+   if(!currencyOK)
+      AddRow(EVE_ROW_KV, "Currency", d.currency + " - IDR required", EVE_C_LABEL, EVE_C_RED, 0.0);
    AddRow(EVE_ROW_KV, "Balance", EveFormatIDR(d.balance), EVE_C_LABEL, EVE_C_VALUE, 0.0);
    AddRow(EVE_ROW_KV, "Equity", EveFormatIDR(d.equity), EVE_C_LABEL, EVE_C_VALUE, 0.0);
    AddRow(EVE_ROW_BIG, "Floating", EveFormatIDRSigned(fl), EVE_C_LABEL,
           (fl < 0.0) ? EVE_C_RED : ((fl > 0.0) ? EVE_C_GREEN : EVE_C_VALUE), 0.0);
-   AddRow(EVE_ROW_KV, "Positions", IntegerToString(d.positions) + " open  |  " + IntegerToString(d.pendingOrders) + " pending",
+   AddRow(EVE_ROW_KV, "Positions", IntegerToString(d.positions) + " open | " + IntegerToString(d.pendingOrders) + " pending",
           EVE_C_LABEL, EVE_C_VALUE, 0.0);
 
    //--- protections
@@ -319,7 +344,7 @@ void CEveRiskDashboard::BuildRows(const SEveDashboardData &d)
       AddRow(EVE_ROW_KV, "Auto SL (loss if hit)", EveFormatIDR(d.slTheoretical) + " / " + EveFormatIDRLong(d.slBudget),
              EVE_C_LABEL, EVE_C_VALUE, 0.0);
       AddRow(EVE_ROW_BAR, "", "", sc, sc, r3);
-      AddRow(EVE_ROW_KV, "SL status", st + ((d.slUnprotected > 0) ? "  (" + IntegerToString(d.slUnprotected) + " without SL)" : ""),
+      AddRow(EVE_ROW_KV, "SL status", st + ((d.slUnprotected > 0) ? " (" + IntegerToString(d.slUnprotected) + " without SL)" : ""),
              EVE_C_LABEL, sc, 0.0);
      }
    else
@@ -328,14 +353,14 @@ void CEveRiskDashboard::BuildRows(const SEveDashboardData &d)
    if(d.trailActive)
       AddRow(EVE_ROW_KV, "Trailing stop",
              (d.trailGroups > 0) ? "ON - running on " + IntegerToString(d.trailGroups) + " basket(s)"
-                                 : "ON - starts at profit " + EveFormatIDRLong(d.trailStart),
+                                 : "ON - starts at " + EveFormatIDRLong(d.trailStart),
              EVE_C_LABEL, (d.trailGroups > 0) ? EVE_C_GREEN : EVE_C_VALUE, 0.0);
    else
       AddRow(EVE_ROW_KV, "Trailing stop", "OFF", EVE_C_LABEL, EVE_C_DIM, 0.0);
    if(d.lockedProfit > 0.0)
       AddRow(EVE_ROW_KV, "Profit locked by SL", EveFormatIDR(d.lockedProfit), EVE_C_LABEL, EVE_C_GREEN, 0.0);
    if(d.tpActive)
-      AddRow(EVE_ROW_KV, "Basket TP", EveFormatIDRLong(d.tpTarget) + " per basket", EVE_C_LABEL, EVE_C_VALUE, 0.0);
+      AddRow(EVE_ROW_KV, "Basket TP", EveFormatIDRLong(d.tpTarget), EVE_C_LABEL, EVE_C_VALUE, 0.0);
    else
       AddRow(EVE_ROW_KV, "Basket TP", "OFF", EVE_C_LABEL, EVE_C_DIM, 0.0);
 
@@ -343,15 +368,13 @@ void CEveRiskDashboard::BuildRows(const SEveDashboardData &d)
    AddRow(EVE_ROW_SECTION, "SYSTEM", "", EVE_C_SECTION, EVE_C_SECTION, 0.0);
    AddRow(EVE_ROW_KV, "Auto Trading", d.tradeAllowed ? "OK (" + d.marginMode + ")" : "OFF - " + d.tradeBlock,
           EVE_C_LABEL, d.tradeAllowed ? EVE_C_GREEN : EVE_C_RED, 0.0);
-   AddRow(EVE_ROW_KV, "Lock after close", "Loss " + EveBoolOnOff(d.lockLoss) + "  |  Profit " + EveBoolOnOff(d.lockProfit),
+   AddRow(EVE_ROW_KV, "Lock after close", "Loss " + EveBoolOnOff(d.lockLoss) + " | Profit " + EveBoolOnOff(d.lockProfit),
           EVE_C_LABEL, EVE_C_VALUE, 0.0);
    if((d.lockLoss || d.lockProfit) && !d.cancelPending)
       AddRow(EVE_ROW_KV, "Pending when locked", "NOT deleted", EVE_C_LABEL, EVE_C_ORANGE, 0.0);
    AddRow(EVE_ROW_KV, "Last event", (d.lastEvent != "") ? d.lastEvent : "-", EVE_C_LABEL, EVE_C_DIM, 0.0);
    if(d.banner != "")
       AddRow(EVE_ROW_TEXT, d.banner, "", d.bannerColor, d.bannerColor, 0.0);
-   AddRow(EVE_ROW_NOTE, "Floating = POSITION_PROFIT (no swap, no commission). Covers all positions in the account.", "",
-          EVE_C_DIM, EVE_C_DIM, 0.0);
   }
 
 //+------------------------------------------------------------------+
@@ -415,23 +438,24 @@ int CEveRiskDashboard::Wrap(const string text, const int maxWidth, string &lines
 //+------------------------------------------------------------------+
 int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWidth)
   {
-   int padX = S(12);
-   int gap = S(18);
-   int headerH = S(32);
-   int maxW = S(470);
-   neededWidth = S(300);
+   int padX = S(7);
+   int gap = S(10);
+   int headerH = S(20);
+   int maxW = S(300);
+   neededWidth = S(170);
 
-   //--- header: title + badge + minimize button
+   //--- header: title + version + badge + minimize button
+   string ver = "v" + EVE_RP_VERSION;
    FontTitle();
    int titleW = m_canvas.TextWidth(m_title);
    FontSmall();
-   int verW = m_canvas.TextWidth("v" + EVE_RP_VERSION);
+   int verW = m_canvas.TextWidth(ver);
    FontSection();
    int badgeTextW = m_canvas.TextWidth(m_badge);
-   int badgeW = badgeTextW + S(16);
-   int badgeH = S(18);
-   int btnW = S(20);
-   int headerNeed = padX + titleW + S(6) + verW + S(10) + badgeW + S(8) + btnW + padX;
+   int badgeW = badgeTextW + S(10);
+   int badgeH = S(13);
+   int btnW = S(13);
+   int headerNeed = padX + titleW + S(4) + verW + S(8) + badgeW + S(6) + btnW + padX;
    if(headerNeed > neededWidth)
       neededWidth = headerNeed;
 
@@ -442,7 +466,7 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
       FontTitle();
       m_canvas.TextOut(padX, headerH / 2, m_title, ToArgb(EVE_C_VALUE), TA_LEFT | TA_VCENTER);
       FontSmall();
-      m_canvas.TextOut(padX + titleW + S(6), headerH / 2, "v" + EVE_RP_VERSION, ToArgb(EVE_C_DIM), TA_LEFT | TA_VCENTER);
+      m_canvas.TextOut(padX + titleW + S(4), headerH / 2, ver, ToArgb(EVE_C_DIM), TA_LEFT | TA_VCENTER);
       //--- minimize button
       m_minX2 = width - padX;
       m_minX1 = m_minX2 - btnW;
@@ -453,7 +477,7 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
       m_canvas.TextOut((m_minX1 + m_minX2) / 2, (m_minY1 + m_minY2) / 2, m_minimized ? "+" : "-",
                        ToArgb(EVE_C_VALUE), TA_CENTER | TA_VCENTER);
       //--- state badge (pill)
-      int bx2 = m_minX1 - S(8);
+      int bx2 = m_minX1 - S(6);
       int bx1 = bx2 - badgeW;
       int by1 = (headerH - badgeH) / 2;
       int by2 = by1 + badgeH;
@@ -467,24 +491,26 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
       m_canvas.LineHorizontal(0, width - 1, headerH, ToArgb(EVE_C_BORDER));
      }
 
-   int y = headerH + S(4);
    bool hideBody = (m_minimized && m_enabled);
+   int y = headerH + 1;
+   if(!hideBody)
+      y += S(1);
    int n = ArraySize(m_rows);
    for(int i = 0; i < n && !hideBody; i++)
      {
       int kind = m_rows[i].kind;
       if(kind == EVE_ROW_SECTION)
         {
-         y += S(6);
+         y += S(3);
          FontSection();
          int th = m_canvas.TextHeight(m_rows[i].key);
          if(drawIt)
            {
             m_canvas.TextOut(padX, y, m_rows[i].key, ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
             int tw = m_canvas.TextWidth(m_rows[i].key);
-            m_canvas.LineHorizontal(padX + tw + S(8), width - padX, y + th / 2, ToArgb(EVE_C_LINE));
+            m_canvas.LineHorizontal(padX + tw + S(6), width - padX, y + th / 2, ToArgb(EVE_C_LINE));
            }
-         y += th + S(4);
+         y += th + S(1);
          continue;
         }
       if(kind == EVE_ROW_KV || kind == EVE_ROW_BIG)
@@ -510,12 +536,12 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
             FontLabel();
             m_canvas.TextOut(padX, y + rowH / 2, m_rows[i].key, ToArgb(m_rows[i].keyColor), TA_LEFT | TA_VCENTER);
            }
-         y += rowH + S(3);
+         y += rowH + S(1);
          continue;
         }
       if(kind == EVE_ROW_BAR)
         {
-         int barH = S(5);
+         int barH = S(2);
          if(drawIt)
            {
             double rr = m_rows[i].ratio;
@@ -530,52 +556,38 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
             if(fx > x1)
                m_canvas.FillRectangle(x1, y, fx, y + barH, ToArgb(m_rows[i].valueColor));
            }
-         y += barH + S(6);
+         y += barH + S(3);
          continue;
         }
       if(kind == EVE_ROW_TEXT)
         {
          FontValue();
          string lines[];
-         int textW = ((width > 0) ? width : neededWidth) - 2 * padX - S(12);
-         if(textW < S(100))
-            textW = S(100);
+         int textW = ((width > 0) ? width : neededWidth) - 2 * padX - S(8);
+         if(textW < S(80))
+            textW = S(80);
          int nl = Wrap(m_rows[i].key, textW, lines);
-         int lh = m_canvas.TextHeight("Ag") + S(2);
-         int boxH = nl * lh + S(12);
-         y += S(4);
+         int lh = m_canvas.TextHeight("Ag") + S(1);
+         int boxH = nl * lh + S(8);
+         y += S(3);
          if(drawIt)
            {
             color boxBg = Mix(EVE_C_BG, m_rows[i].keyColor, 0.18);
-            m_canvas.FillRectangle(padX - S(4), y, width - padX + S(4), y + boxH, ToArgb(boxBg));
-            m_canvas.FillRectangle(padX - S(4), y, padX - S(2), y + boxH, ToArgb(m_rows[i].keyColor));
+            m_canvas.FillRectangle(padX - S(3), y, width - padX + S(3), y + boxH, ToArgb(boxBg));
+            m_canvas.FillRectangle(padX - S(3), y, padX - S(2), y + boxH, ToArgb(m_rows[i].keyColor));
             for(int k = 0; k < nl; k++)
-               m_canvas.TextOut(padX + S(6), y + S(6) + k * lh, lines[k], ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
+               m_canvas.TextOut(padX + S(4), y + S(4) + k * lh, lines[k], ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
            }
-         y += boxH + S(4);
-         continue;
-        }
-      if(kind == EVE_ROW_NOTE)
-        {
-         FontSmall();
-         y += S(4);
-         string noteLines[];
-         int noteW = ((width > 0) ? width : neededWidth) - 2 * padX;
-         int nn = Wrap(m_rows[i].key, noteW, noteLines);
-         int nh = m_canvas.TextHeight("Ag") + S(1);
-         if(drawIt)
-            for(int k = 0; k < nn; k++)
-               m_canvas.TextOut(padX, y + k * nh, noteLines[k], ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
-         y += nn * nh;
+         y += boxH + S(3);
          continue;
         }
      }
 
-   //--- RESET button (only while LOCKED)
+   //--- RESET button (only while LOCKED, also when the panel is minimized)
    if(m_resetVisible)
      {
-      y += S(8);
-      int bh = S(30);
+      y += S(5);
+      int bh = S(20);
       m_rstX1 = padX;
       m_rstX2 = ((width > 0) ? width : neededWidth) - padX;
       m_rstY1 = y;
@@ -592,7 +604,8 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
         }
       y += bh;
      }
-   y += S(10);
+   if(!hideBody || m_resetVisible)
+      y += S(5);
    if(neededWidth > maxW)
       neededWidth = maxW;
    if(drawIt)
@@ -701,7 +714,8 @@ int CEveRiskDashboard::HandleClick(const string objectName, const int x, const i
       return 0;
    int lx = x - m_posX;
    int ly = y - m_posY;
-   if(lx >= m_minX1 && lx <= m_minX2 && ly >= m_minY1 && ly <= m_minY2)
+   int tol = S(3);   // the minimize button is small: accept clicks just around it
+   if(lx >= m_minX1 - tol && lx <= m_minX2 + tol && ly >= m_minY1 - tol && ly <= m_minY2 + tol)
      {
       m_minimized = !m_minimized;
       return 3;

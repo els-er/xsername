@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.12 — 2026-10-08
+
+Panel lebih kecil, berdasarkan masukan user (panel v1.11 menutupi hampir seluruh tinggi chart). Logika proteksi tidak berubah.
+
+- **Panel ringkas:**
+  - Huruf lebih kecil: label/angka 9 → 6 pt, judul 10 → 6,5 pt, angka Floating 14 → 8,5 pt.
+  - Jarak antarbaris, header, badge, tombol, dan bar progres dirapatkan.
+  - Baris *Currency* digabung ke judul bagian (`ACCOUNT (IDR)`); baris merah muncul hanya jika mata uang bukan IDR.
+  - Catatan dua baris di bawah panel dihapus (isinya ada di PANDUAN).
+  - Teks dipersingkat: `ON - starts at Rp…`, `Basket TP Rp…`.
+  - Hasil simulasi tata letak di skala Windows 150%: 450×705 px → kira-kira 290×375 px (tinggi ±53%, lebar ±64%).
+- **Input baru `Panel size (%)`** (grup 7, default 100, rentang 50–200): mengalikan ukuran huruf dan jarak. Nilai di luar rentang → error di panel dan memakai 100.
+- **Tombol minimize** menerima klik sedikit di sekitarnya (tombolnya kini lebih kecil).
+- **Unit test:** validasi `Panel size (%)` (70 diterima, 10 ditolak → 100).
+
 ## v1.11 — 2026-10-08
 
 Perbaikan compile v1.10. Tidak ada perubahan perilaku.

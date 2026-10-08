@@ -164,6 +164,7 @@ void CEveConfigurationValidator::Validate(const SEveConfig &inCfg, SEveConfig &o
    out.reconciliationIntervalMs  = CheckRange(out.reconciliationIntervalMs, 50, 10000, 250, "Check interval (ms)", errors);
    out.dashboardX                = CheckRange(out.dashboardX, 0, 5000, 10, "Panel offset X", errors);
    out.dashboardY                = CheckRange(out.dashboardY, 0, 5000, 30, "Panel offset Y", errors);
+   out.dashboardSizePct          = CheckRange(out.dashboardSizePct, 50, 200, 100, "Panel size (%)", errors);
    if(out.dashboardCorner != EVE_CORNER_LEFT_UPPER && out.dashboardCorner != EVE_CORNER_RIGHT_UPPER &&
       out.dashboardCorner != EVE_CORNER_LEFT_LOWER && out.dashboardCorner != EVE_CORNER_RIGHT_LOWER)
      {

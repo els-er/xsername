@@ -9,7 +9,7 @@
 //| (EVE_IDR_RiskProtector.mq5) contains no position-opening code.   |
 //+------------------------------------------------------------------+
 #property copyright   "EVE"
-#property version     "1.11"
+#property version     "1.12"
 #property description "TEST HARNESS - Strategy Tester only. Opens scripted positions to test the protector."
 #property description "NEVER attach to a live or demo chart (it refuses to start outside the tester)."
 
