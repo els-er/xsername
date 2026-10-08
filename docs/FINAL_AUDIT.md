@@ -43,7 +43,7 @@ Status:
 
 | ID | Risiko | Dampak / mitigasi |
 |---|---|---|
-| R1 | Belum di-compile / belum diuji di MT5 | Wajib compile + unit test + harness + checklist demo sebelum live. |
+| R1 | Compile dan unit test sudah lulus di MT5 user; harness tester dan checklist demo belum | Wajib harness + checklist demo sebelum live. |
 | R2 | Posisi tanpa SL yang terblokir (market tutup) tidak masuk perhitungan budget saat itu | Ditampilkan UNPROTECTED. Saat market buka, rencana diulang dan posisi lain hanya diketatkan. |
 | R3 | Posisi netting > `VOLUME_MAX` dengan sisa pecahan < `VOLUME_MIN` | Close sisa bisa ditolak berulang (retry persisten + CRITICAL). Sangat jarang. |
 | R4 | Drift kurs USD/IDR hanya dikoreksi selama EA berjalan | Margin 1% + koreksi otomatis saat online. |

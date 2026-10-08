@@ -103,7 +103,7 @@ Isi kolom "Hasil" saat menguji.
 | Item | Status |
 |---|---|
 | Cek silang Python (C) | **Dijalankan oleh Claude**. Semua angka cocok dengan ekspektasi unit test (lihat `tests/solver_mirror_check.out.txt`). |
-| Compile MQL5 | **Belum.** Tidak ada MetaEditor di lingkungan pengembangan; menunggu compile oleh user (PANDUAN §3). |
-| Unit test MQL5 (A) | **Belum dijalankan.** Menunggu user. |
+| Compile MQL5 | **Lulus** — dilaporkan user: 0 error. |
+| Unit test MQL5 (A) | **Lulus** — dilaporkan user: 0 failed. |
 | Harness tester (B) | **Belum dijalankan.** Menunggu user. |
 | Checklist demo (D) | **Belum dijalankan.** Menunggu user. |
