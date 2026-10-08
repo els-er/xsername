@@ -1,4 +1,4 @@
-# Rencana Uji & Bukti — EVE IDR Risk Protector v1.10
+# Rencana Uji & Bukti — EVE IDR Risk Protector v1.11
 
 Ada empat lapisan uji:
 
@@ -122,7 +122,8 @@ Isi kolom "Hasil" saat menguji.
 | Unit test MQL5 v1.00 (A) | **Lulus** — dilaporkan user: 0 failed. |
 | Uji pakai v1.00 di MT5 | Dilaporkan user: jalan; masukan → v1.10 (bahasa, trailing/TP, panel). |
 | Cek silang Python v1.10 (TP/trailing) | **Dijalankan oleh Claude**, angka T26–T30 cocok (`tests/solver_mirror_check.out.txt`). |
-| Compile MQL5 v1.10 | **Belum** — menunggu compile oleh user. |
-| Unit test MQL5 v1.10 | **Belum** — menunggu user. |
+| Compile MQL5 v1.10 | **Gagal** — dilaporkan user: 33 error, 25 warning di ketiga program. Satu sebab: fungsi `ARGB` di panel bentrok dengan macro `ARGB` milik `Canvas.mqh`. |
+| Compile MQL5 v1.11 | **Belum** — perbaikan nama sudah dibuat, menunggu compile oleh user. |
+| Unit test MQL5 v1.11 | **Belum** — menunggu user. |
 | Harness tester (B) | **Belum dijalankan.** Menunggu user. |
 | Checklist demo (D) | **Belum dijalankan.** Menunggu user. |

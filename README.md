@@ -1,4 +1,4 @@
-# EVE IDR Risk Protector (MT5) — v1.10
+# EVE IDR Risk Protector (MT5) — v1.11
 
 EA **pengendali risiko** untuk MetaTrader 5 (akun Exness Pro dengan mata uang **IDR**).
 
@@ -152,4 +152,4 @@ Label di bawah persis seperti yang tampil di tab Inputs MT5. Semua nominal dalam
 
 ## Versi
 
-v1.10 — lihat [`CHANGELOG.md`](CHANGELOG.md).
+v1.11 (perbaikan compile v1.10) — lihat [`CHANGELOG.md`](CHANGELOG.md).

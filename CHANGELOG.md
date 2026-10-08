@@ -1,8 +1,18 @@
 # Changelog
 
+## v1.11 — 2026-10-08
+
+Perbaikan compile v1.10. Tidak ada perubahan perilaku.
+
+- **Compile:** v1.10 gagal di ketiga program (33 error, 25 warning). Semuanya berasal dari satu sebab:
+  - Fungsi bantu warna di `RiskDashboard.mqh` bernama `ARGB`, sama dengan macro `ARGB(a,r,g,b)` milik `Canvas.mqh` bawaan MT5.
+  - Setiap pemanggilannya dibaca sebagai macro, sehingga class panel rusak dan error berantai ke `RiskProtectorApp.mqh`.
+  - Fungsi diganti nama menjadi `ToArgb`. Tidak ada nama lain di kode EA yang sama dengan macro atau class dari library standar yang dipakai panel.
+- **Versi:** 1.11 (EA, harness, panel).
+
 ## v1.10 — 2026-10-08
 
-Berdasarkan masukan user setelah uji v1.00 di MT5. Belum di-compile di lingkungan pengembangan.
+Berdasarkan masukan user setelah uji v1.00 di MT5. Compile gagal di MT5 user; diperbaiki di v1.11.
 
 - **Input:**
   - Semua label input diganti bahasa Inggris sederhana dengan saklar ON/OFF.

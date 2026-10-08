@@ -1,4 +1,4 @@
-# Audit Akhir (§41) — EVE IDR Risk Protector v1.00 (+ addendum v1.10)
+# Audit Akhir (§41) — EVE IDR Risk Protector v1.00 (+ addendum v1.10, v1.11)
 
 Audit dilakukan dari atas ke bawah terhadap seluruh kode di `MQL5/`.
 
@@ -71,7 +71,24 @@ Status:
 
 | ID | Risiko | Mitigasi |
 |---|---|---|
-| R10 | v1.10 belum di-compile; API CCanvas dan `OrderSendAsync` baru dipakai | User compile + unit test. Opsi `Send orders in parallel = OFF` kembali ke jalur sinkron v1.00. |
+| R10 | v1.10 belum di-compile; API CCanvas dan `OrderSendAsync` baru dipakai | Terjadi: compile v1.10 gagal (lihat addendum v1.11). User compile + unit test v1.11. Opsi `Send orders in parallel = OFF` kembali ke jalur sinkron v1.00. |
 | R11 | TP/trailing ikut mengatur posisi EA lain; TP manual disamakan | Didokumentasikan. Matikan fitur jika EA lain mengatur TP sendiri. |
 | R12 | TP keranjang ditutup client-side bila profit ≥ target tapi TP tidak bisa dipasang | Disengaja. Tercatat di log `BASKET TP REACHED`. |
 | R13 | Trailing berbasis harga bersama: entry baru di keranjang ikut mendapat SL trailing keranjang | Sesuai semantik keranjang (Q1). Didokumentasikan di PANDUAN §7. |
+
+---
+
+## Addendum v1.11
+
+Compile v1.10 di MT5 user gagal: 33 error dan 25 warning, sama di EA, harness, dan unit test.
+
+| Item | Temuan | Perbaikan |
+|---|---|---|
+| Sebab | Fungsi bantu warna `CEveRiskDashboard::ARGB(color)` bernama sama dengan macro `ARGB(a,r,g,b)` di `Canvas.mqh`. Preprocessor membaca setiap pemanggilan sebagai macro dengan argumen kurang. Itulah 25 warning (`too few arguments for function-like macro`). | Diganti nama menjadi `ToArgb`, dengan komentar alasannya. |
+| Error berantai | Deklarasi class panel terputus di baris 117. Anggota sisanya terbaca di luar class, sehingga muncul `member function not defined`, `undeclared identifier`, dan `OnChartChange` tidak dikenal di `RiskProtectorApp.mqh`. | Hilang bersama perbaikan di atas. |
+| Nama lain yang bisa bentrok | Dicek: tidak ada identifier di kode EA yang sama dengan macro atau class dari `Canvas.mqh` dan header yang ikut dimuatnya (`XRGB`, `TRGB`, `GETRGB*`, `COLOR2RGB`, `RGB2COLOR`, `CRect`, `CPoint`, `CSize`, `CFile*`, `CObject`, `ENUM_LINE_END`, `ERR_USER_*`). Semua `#define` milik EA berawalan `EVE_`. | — |
+| Isi fungsi panel | Karena class terputus, isi fungsi panel belum pernah diperiksa compiler. Diperiksa manual: signature `CCanvas` yang dipakai, konstanta (`TA_*`, `FW_*`, `COLOR_FORMAT_ARGB_NORMALIZE`), semua helper dari modul lain ada dan publik. Tidak ada konversi angka→string implisit atau konversi yang memotong data. | — |
+| Kode lain | Output compile hanya berisi error/warning dari panel dan satu pemanggilan panel di `RiskProtectorApp.mqh`. Tidak ada error/warning dari modul lain. | — |
+
+Pelajaran: helper di class tidak boleh memakai nama berhuruf besar yang umum di library standar. Nama baru memakai gaya `CamelCase`.
+

@@ -114,7 +114,7 @@ private:
    color             m_badgeColor;
 
    int               S(const double v) const { return (int)MathRound(v * m_scale); }
-   uint              ARGB(const color c) const { return ColorToARGB(c, 255); }
+   uint              ToArgb(const color c) const { return ColorToARGB(c, 255); }   // not "ARGB": Canvas.mqh defines a macro with that name
    static color      Mix(const color a, const color b, const double t);
    void              FontLabel(void)   { m_canvas.FontSet(EVE_DB_FONT, -90, FW_NORMAL);   }
    void              FontValue(void)   { m_canvas.FontSet(EVE_DB_FONT, -90, FW_SEMIBOLD); }
@@ -437,21 +437,21 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
 
    if(drawIt)
      {
-      m_canvas.Erase(ARGB(EVE_C_BG));
-      m_canvas.FillRectangle(0, 0, width - 1, headerH, ARGB(EVE_C_HEADER));
+      m_canvas.Erase(ToArgb(EVE_C_BG));
+      m_canvas.FillRectangle(0, 0, width - 1, headerH, ToArgb(EVE_C_HEADER));
       FontTitle();
-      m_canvas.TextOut(padX, headerH / 2, m_title, ARGB(EVE_C_VALUE), TA_LEFT | TA_VCENTER);
+      m_canvas.TextOut(padX, headerH / 2, m_title, ToArgb(EVE_C_VALUE), TA_LEFT | TA_VCENTER);
       FontSmall();
-      m_canvas.TextOut(padX + titleW + S(6), headerH / 2, "v" + EVE_RP_VERSION, ARGB(EVE_C_DIM), TA_LEFT | TA_VCENTER);
+      m_canvas.TextOut(padX + titleW + S(6), headerH / 2, "v" + EVE_RP_VERSION, ToArgb(EVE_C_DIM), TA_LEFT | TA_VCENTER);
       //--- minimize button
       m_minX2 = width - padX;
       m_minX1 = m_minX2 - btnW;
       m_minY1 = (headerH - btnW) / 2;
       m_minY2 = m_minY1 + btnW;
-      m_canvas.FillRectangle(m_minX1, m_minY1, m_minX2, m_minY2, ARGB(EVE_C_LINE));
+      m_canvas.FillRectangle(m_minX1, m_minY1, m_minX2, m_minY2, ToArgb(EVE_C_LINE));
       FontValue();
       m_canvas.TextOut((m_minX1 + m_minX2) / 2, (m_minY1 + m_minY2) / 2, m_minimized ? "+" : "-",
-                       ARGB(EVE_C_VALUE), TA_CENTER | TA_VCENTER);
+                       ToArgb(EVE_C_VALUE), TA_CENTER | TA_VCENTER);
       //--- state badge (pill)
       int bx2 = m_minX1 - S(8);
       int bx1 = bx2 - badgeW;
@@ -459,12 +459,12 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
       int by2 = by1 + badgeH;
       int r = badgeH / 2;
       color badgeBg = Mix(EVE_C_HEADER, m_badgeColor, 0.30);
-      m_canvas.FillRectangle(bx1 + r, by1, bx2 - r, by2, ARGB(badgeBg));
-      m_canvas.FillCircle(bx1 + r, by1 + r, r, ARGB(badgeBg));
-      m_canvas.FillCircle(bx2 - r, by1 + r, r, ARGB(badgeBg));
+      m_canvas.FillRectangle(bx1 + r, by1, bx2 - r, by2, ToArgb(badgeBg));
+      m_canvas.FillCircle(bx1 + r, by1 + r, r, ToArgb(badgeBg));
+      m_canvas.FillCircle(bx2 - r, by1 + r, r, ToArgb(badgeBg));
       FontSection();
-      m_canvas.TextOut((bx1 + bx2) / 2, (by1 + by2) / 2, m_badge, ARGB(m_badgeColor), TA_CENTER | TA_VCENTER);
-      m_canvas.LineHorizontal(0, width - 1, headerH, ARGB(EVE_C_BORDER));
+      m_canvas.TextOut((bx1 + bx2) / 2, (by1 + by2) / 2, m_badge, ToArgb(m_badgeColor), TA_CENTER | TA_VCENTER);
+      m_canvas.LineHorizontal(0, width - 1, headerH, ToArgb(EVE_C_BORDER));
      }
 
    int y = headerH + S(4);
@@ -480,9 +480,9 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
          int th = m_canvas.TextHeight(m_rows[i].key);
          if(drawIt)
            {
-            m_canvas.TextOut(padX, y, m_rows[i].key, ARGB(m_rows[i].keyColor), TA_LEFT | TA_TOP);
+            m_canvas.TextOut(padX, y, m_rows[i].key, ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
             int tw = m_canvas.TextWidth(m_rows[i].key);
-            m_canvas.LineHorizontal(padX + tw + S(8), width - padX, y + th / 2, ARGB(EVE_C_LINE));
+            m_canvas.LineHorizontal(padX + tw + S(8), width - padX, y + th / 2, ToArgb(EVE_C_LINE));
            }
          y += th + S(4);
          continue;
@@ -506,9 +506,9 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
            {
             int valueMax = width - 2 * padX - kw - gap;
             string v = Fit(m_rows[i].value, valueMax);
-            m_canvas.TextOut(width - padX, y + rowH / 2, v, ARGB(m_rows[i].valueColor), TA_RIGHT | TA_VCENTER);
+            m_canvas.TextOut(width - padX, y + rowH / 2, v, ToArgb(m_rows[i].valueColor), TA_RIGHT | TA_VCENTER);
             FontLabel();
-            m_canvas.TextOut(padX, y + rowH / 2, m_rows[i].key, ARGB(m_rows[i].keyColor), TA_LEFT | TA_VCENTER);
+            m_canvas.TextOut(padX, y + rowH / 2, m_rows[i].key, ToArgb(m_rows[i].keyColor), TA_LEFT | TA_VCENTER);
            }
          y += rowH + S(3);
          continue;
@@ -525,10 +525,10 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
                rr = 1.0;
             int x1 = padX;
             int x2 = width - padX;
-            m_canvas.FillRectangle(x1, y, x2, y + barH, ARGB(EVE_C_BAR_BG));
+            m_canvas.FillRectangle(x1, y, x2, y + barH, ToArgb(EVE_C_BAR_BG));
             int fx = x1 + (int)MathRound((x2 - x1) * rr);
             if(fx > x1)
-               m_canvas.FillRectangle(x1, y, fx, y + barH, ARGB(m_rows[i].valueColor));
+               m_canvas.FillRectangle(x1, y, fx, y + barH, ToArgb(m_rows[i].valueColor));
            }
          y += barH + S(6);
          continue;
@@ -547,10 +547,10 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
          if(drawIt)
            {
             color boxBg = Mix(EVE_C_BG, m_rows[i].keyColor, 0.18);
-            m_canvas.FillRectangle(padX - S(4), y, width - padX + S(4), y + boxH, ARGB(boxBg));
-            m_canvas.FillRectangle(padX - S(4), y, padX - S(2), y + boxH, ARGB(m_rows[i].keyColor));
+            m_canvas.FillRectangle(padX - S(4), y, width - padX + S(4), y + boxH, ToArgb(boxBg));
+            m_canvas.FillRectangle(padX - S(4), y, padX - S(2), y + boxH, ToArgb(m_rows[i].keyColor));
             for(int k = 0; k < nl; k++)
-               m_canvas.TextOut(padX + S(6), y + S(6) + k * lh, lines[k], ARGB(m_rows[i].keyColor), TA_LEFT | TA_TOP);
+               m_canvas.TextOut(padX + S(6), y + S(6) + k * lh, lines[k], ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
            }
          y += boxH + S(4);
          continue;
@@ -565,7 +565,7 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
          int nh = m_canvas.TextHeight("Ag") + S(1);
          if(drawIt)
             for(int k = 0; k < nn; k++)
-               m_canvas.TextOut(padX, y + k * nh, noteLines[k], ARGB(m_rows[i].keyColor), TA_LEFT | TA_TOP);
+               m_canvas.TextOut(padX, y + k * nh, noteLines[k], ToArgb(m_rows[i].keyColor), TA_LEFT | TA_TOP);
          y += nn * nh;
          continue;
         }
@@ -584,11 +584,11 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
         {
          bool armed = ResetArmed();
          color bc = armed ? EVE_C_ORANGE : EVE_C_RED;
-         m_canvas.FillRectangle(m_rstX1, m_rstY1, m_rstX2, m_rstY2, ARGB(bc));
+         m_canvas.FillRectangle(m_rstX1, m_rstY1, m_rstX2, m_rstY2, ToArgb(bc));
          FontValue();
          m_canvas.TextOut((m_rstX1 + m_rstX2) / 2, (m_rstY1 + m_rstY2) / 2,
                           armed ? "CLICK AGAIN TO CONFIRM RESET" : "RESET PROTECTION",
-                          ARGB(clrWhite), TA_CENTER | TA_VCENTER);
+                          ToArgb(clrWhite), TA_CENTER | TA_VCENTER);
         }
       y += bh;
      }
@@ -596,7 +596,7 @@ int CEveRiskDashboard::Render(const bool drawIt, const int width, int &neededWid
    if(neededWidth > maxW)
       neededWidth = maxW;
    if(drawIt)
-      m_canvas.Rectangle(0, 0, width - 1, y - 1, ARGB(EVE_C_BORDER));
+      m_canvas.Rectangle(0, 0, width - 1, y - 1, ToArgb(EVE_C_BORDER));
    return y;
   }
 

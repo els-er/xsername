@@ -1,4 +1,4 @@
-# Panduan Kerja — EVE IDR Risk Protector v1.10
+# Panduan Kerja — EVE IDR Risk Protector v1.11
 
 Panduan ini berisi langkah compile, uji, pemasangan, dan pemakaian EA, serta cara mengirim hasil atau error ke saya (Claude) agar bisa diperbaiki.
 
@@ -37,6 +37,7 @@ Mata uang akun harus **IDR**. Kalau bukan, EA masuk status `DISABLED` dan tidak 
    ```
 
    v1.10 menambah file baru `Include/EVE_Risk/TrailTPManager.mqh`. Pastikan file itu ikut tersalin.
+   v1.11 mengubah `Include/EVE_Risk/RiskDashboard.mqh`, `Defines.mqh`, dan kedua file di `Experts`. Paling aman: salin ulang semua file.
 3. Klik kanan **Navigator → Refresh**.
 
 > Saat update dari v1.00: nama input berubah (label sekarang bahasa Inggris sederhana). File `.set` lama tidak terbaca otomatis, jadi isi ulang nilai Anda sekali, lalu **Save** sebagai `.set` baru.
@@ -50,7 +51,7 @@ Mata uang akun harus **IDR**. Kalau bukan, EA masuk status `DISABLED` dan tidak 
    - `Experts/EVE_IDR_RiskProtector.mq5`
    - `Scripts/EVE_Risk_UnitTests.mq5`
    - `Experts/EVE_RiskProtector_TestHarness.mq5`
-3. Target di tab **Errors**: **0 errors**.
+3. Target di tab **Errors**: **0 errors, 0 warnings**.
 
 Kalau ada error: di tab **Errors** tekan Ctrl+A, klik kanan → **Copy**, lalu tempel ke chat. Sertakan juga nomor build MT5 (*Help → About*).
 
@@ -133,7 +134,7 @@ Bedanya dengan **Profit target** (grup 2): profit target melihat total **semua p
 ## 9. Membaca panel
 
 ```text
-EVE RISK PROTECTOR v1.10              [ARMED] [-]
+EVE RISK PROTECTOR v1.11              [ARMED] [-]
 ACCOUNT ──────────────────────────────────────────
 Currency                                     IDR
 Balance                              Rp1.600.582
@@ -200,8 +201,9 @@ Untuk delay paling kecil, jalankan MT5 di **Windows VPS dekat server broker** (b
 | Posisi baru langsung ditutup | EA `LOCKED`, SL tidak bisa dipasang sesuai batas (fail-safe), atau profit keranjang sudah ≥ TP. Cek `Last event` dan log. |
 | TP yang saya ubah kembali sendiri | Fitur Take profit ON. Matikan jika ingin TP manual. |
 | Push tidak masuk | MetaQuotes ID belum diisi. |
+| Compile: `too few arguments for function-like macro 'ARGB'` | Masih memakai `RiskDashboard.mqh` v1.10. Salin ulang folder `Include/EVE_Risk` dari paket v1.11, lalu compile ulang ketiga program. |
 
-Agar saya bisa mencoba compile sendiri: tambahkan `download.mql5.com` ke **Allowed domains** di pengaturan environment sesi Claude Code (menu environment → **Edit** → **Network access**). Panduan resmi: https://code.claude.com/docs/en/cloud-environments#network-access.
+Agar saya bisa mencoba compile sendiri: tambahkan `download.mql5.com` ke **Allowed domains** di pengaturan environment sesi Claude Code (menu environment di judul sesi → **Edit** → **Network access**; biarkan kotak *Allow package managers* tetap dicentang). Panduan resmi: https://code.claude.com/docs/en/cloud-environments#network-access.
 
 ---
 

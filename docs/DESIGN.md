@@ -1,4 +1,4 @@
-# Desain — EVE IDR Risk Protector v1.10
+# Desain — EVE IDR Risk Protector v1.11
 
 Dokumen ini memenuhi §41 spek: arsitektur, pemetaan requirement, struktur modul, state machine, algoritma SL agregat, algoritma loss/profit global, algoritma close/retry/verifikasi, dan matriks uji.
 

@@ -6,7 +6,7 @@
 #define EVE_RISK_DEFINES_MQH
 
 #define EVE_RP_NAME              "EVE IDR RISK PROTECTOR"
-#define EVE_RP_VERSION           "1.10"
+#define EVE_RP_VERSION           "1.11"
 #define EVE_RP_REQUIRED_CURRENCY "IDR"
 #define EVE_RP_MAGIC             770010
 #define EVE_RP_COMMENT           "EVE-RP"

@@ -17,8 +17,8 @@
 //| loss/profit differ from the amount you set.                       |
 //+------------------------------------------------------------------+
 #property copyright   "EVE"
-#property version     "1.10"
-#property description "EVE IDR Risk Protector v1.10 - risk-control EA (never opens trades)."
+#property version     "1.11"
+#property description "EVE IDR Risk Protector v1.11 - risk-control EA (never opens trades)."
 #property description "Works on ALL positions in the account (all symbols, manual + other EAs)."
 #property description "Max total loss, profit target, auto stop loss, trailing stop and basket TP - all in IDR."
 #property description "Limits are triggers, not guaranteed fill results."
